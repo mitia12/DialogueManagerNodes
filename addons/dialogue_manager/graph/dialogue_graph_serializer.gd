@@ -16,17 +16,19 @@ static func set_dialogue_properties(text: String, node: DMGraphNode, properties:
 	var dialogue: String = properties.get("text", node.get_property("text", ""))
 	var tags: PackedStringArray = PackedStringArray(properties.get("tags", node.get_property("tags", [])))
 	var static_id: String = properties.get("static_id", node.get_property("static_id", ""))
+	var goto: String = properties.get("goto", node.get_property("goto", ""))
+	var goto_is_snippet: bool = properties.get("goto_is_snippet", node.get_property("goto_is_snippet", false))
 	var old_text: String = node.get_property("text", "")
 
 	if end > start and dialogue == old_text:
-		lines[start] = indent + _format_dialogue_line(character, dialogue, tags, static_id)
+		lines[start] = indent + _format_dialogue_line(character, dialogue, tags, static_id, goto, goto_is_snippet)
 		return "\n".join(PackedStringArray(lines))
 
 	var replacement: PackedStringArray = []
 	var dialogue_lines: PackedStringArray = dialogue.split("\n")
 	for i: int in dialogue_lines.size():
 		if i == 0:
-			replacement.append(indent + _format_dialogue_line(character, dialogue_lines[i], tags, static_id))
+			replacement.append(indent + _format_dialogue_line(character, dialogue_lines[i], tags, static_id, goto, goto_is_snippet))
 		else:
 			replacement.append(indent + "\t" + dialogue_lines[i])
 	return replace_lines(text, start, end, replacement)
@@ -45,18 +47,19 @@ static func set_response_properties(text: String, node: DMGraphNode, properties:
 	var prompt: String = properties.get("text", node.get_property("text", ""))
 	var condition: String = properties.get("condition", node.get_property("condition", ""))
 	var goto: String = properties.get("goto", node.get_property("goto", ""))
+	var goto_is_snippet: bool = properties.get("goto_is_snippet", node.get_property("goto_is_snippet", false))
 	var static_id: String = properties.get("static_id", node.get_property("static_id", ""))
 	var old_text: String = node.get_property("text", "")
 
 	if end > start and prompt == old_text:
-		lines[start] = indent + _format_response_line(prompt, condition, goto, static_id)
+		lines[start] = indent + _format_response_line(prompt, condition, goto, static_id, goto_is_snippet)
 		return "\n".join(PackedStringArray(lines))
 
 	var replacement: PackedStringArray = []
 	var prompt_lines: PackedStringArray = prompt.split("\n")
 	for i: int in prompt_lines.size():
 		if i == 0:
-			replacement.append(indent + _format_response_line(prompt_lines[i], condition, goto, static_id))
+			replacement.append(indent + _format_response_line(prompt_lines[i], condition, goto, static_id, goto_is_snippet))
 		else:
 			replacement.append(indent + "\t" + prompt_lines[i])
 	return replace_lines(text, start, end, replacement)
@@ -262,23 +265,38 @@ static func _line_indent(line: String) -> String:
 	return indent
 
 
-static func _format_dialogue_line(character: String, dialogue: String, tags: PackedStringArray, static_id: String) -> String:
+static func _format_dialogue_line(
+	character: String,
+	dialogue: String,
+	tags: PackedStringArray,
+	static_id: String,
+	goto: String = "",
+	goto_is_snippet: bool = false
+) -> String:
 	var line: String = dialogue
 	if tags.size() > 0:
 		line = "[#%s] %s" % [", ".join(tags), line]
 	if not character.is_empty():
 		line = "%s: %s" % [character, line]
+	if not goto.is_empty():
+		line += (" =>< " if goto_is_snippet else " => ") + goto
 	if not static_id.is_empty():
 		line += " [ID:%s]" % [static_id]
 	return line
 
 
-static func _format_response_line(prompt: String, condition: String, goto: String, static_id: String) -> String:
+static func _format_response_line(
+	prompt: String,
+	condition: String,
+	goto: String,
+	static_id: String,
+	goto_is_snippet: bool = false
+) -> String:
 	var line: String = "- " + prompt
 	if not condition.is_empty():
 		line += " [if %s /]" % [condition]
 	if not goto.is_empty():
-		line += " => %s" % [goto]
+		line += (" =>< " if goto_is_snippet else " => ") + goto
 	if not static_id.is_empty():
 		line += " [ID:%s]" % [static_id]
 	return line

@@ -907,6 +907,7 @@ func _on_graph_toggle_toggled(pressed: bool) -> void:
 
 	if pressed:
 		graph_view.load_document(current_file_path, open_buffers[current_file_path].text)
+		compile()
 
 
 func _on_graph_text_changed(new_text: String, description: String) -> void:

@@ -117,6 +117,9 @@ func to_data() -> Dictionary:
 			if not responses.is_empty():
 				d.responses = responses
 
+			if not next_id_after.is_empty():
+				d.next_id_after = next_id_after
+
 			if static_id != text:
 				d.static_id = static_id
 			if not expression.is_empty():

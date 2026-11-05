@@ -20,6 +20,7 @@ var node_views: Dictionary = {}
 var selected_node: DMGraphNode
 var inspector_fields: Dictionary = {}
 var popup_position: Vector2 = Vector2.ZERO
+var last_errors: Array[DMError] = []
 
 
 func _ready() -> void:
@@ -30,6 +31,7 @@ func _ready() -> void:
 
 func load_document(path: String, text: String) -> void:
 	current_path = path
+	last_errors = []
 	document = DMGraphBuilder.build(text, path)
 	DMGraphSidecar.apply_to_document(document, DMGraphSidecar.load_for(path))
 	selected_node = null
@@ -41,6 +43,7 @@ func clear_document() -> void:
 	current_path = ""
 	document = null
 	selected_node = null
+	last_errors = []
 	node_views.clear()
 	if is_instance_valid(graph_edit):
 		for child: Node in graph_edit.get_children():
@@ -55,6 +58,7 @@ func sync_from_text(text: String) -> void:
 
 	var selected_id: String = selected_node.id if selected_node != null else ""
 	is_syncing = true
+	last_errors = []
 	document = DMGraphBuilder.build(text, current_path)
 	DMGraphSidecar.apply_to_document(document, DMGraphSidecar.load_for(current_path))
 	selected_node = null
@@ -74,10 +78,16 @@ func rebuild() -> void:
 
 
 func set_errors(errors: Array[DMError]) -> void:
+	last_errors = errors
+	if document != null:
+		document.errors = errors
+	_apply_errors()
+
+
+func _apply_errors() -> void:
 	if document == null:
 		return
 
-	document.errors = errors
 	for node_id: String in node_views:
 		var view: DMGraphNodeView = node_views[node_id]
 		var graph_node: DMGraphNode = document.get_node(node_id)
@@ -85,7 +95,7 @@ func set_errors(errors: Array[DMError]) -> void:
 			continue
 
 		var has_error: bool = false
-		for error: DMError in errors:
+		for error: DMError in last_errors:
 			var source_line: int = error.line_number - 1
 			if graph_node.source_start <= source_line and source_line <= graph_node.source_end:
 				has_error = true
@@ -196,10 +206,14 @@ func _build_ui() -> void:
 	graph_edit.end_node_move.connect(_on_end_node_move)
 	split.add_child(graph_edit)
 
+	var inspector_scroll: ScrollContainer = ScrollContainer.new()
+	inspector_scroll.custom_minimum_size = Vector2(280, 0)
+	inspector_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	split.add_child(inspector_scroll)
+
 	inspector = VBoxContainer.new()
-	inspector.custom_minimum_size = Vector2(280, 0)
-	inspector.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	split.add_child(inspector)
+	inspector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inspector_scroll.add_child(inspector)
 
 	_build_inspector()
 
@@ -246,6 +260,8 @@ func _build_graph() -> void:
 	if not has_positions:
 		graph_edit.arrange_nodes()
 
+	_apply_errors()
+
 
 func _build_inspector() -> void:
 	if not is_instance_valid(inspector):
@@ -263,7 +279,7 @@ func _build_inspector() -> void:
 		return
 
 	var title: Label = Label.new()
-	title.text = "Line %d" % [selected_node.source_start + 1]
+	title.text = "End" if selected_node.source_start < 0 else "Line %d" % [selected_node.source_start + 1]
 	inspector.add_child(title)
 
 	match selected_node.kind:
@@ -295,6 +311,9 @@ func _build_inspector() -> void:
 			_add_apply_button()
 
 		DMGraphNode.Kind.JUMP:
+			if selected_node.source_start < 0:
+				_add_label("Virtual end node")
+				return
 			_add_label("Target")
 			_add_line_edit("target", selected_node.get_property("target", ""))
 			_add_check_box("is_snippet", selected_node.get_property("is_snippet", false), "Jump and return")
@@ -441,7 +460,12 @@ func _on_connection_request(from_node: StringName, _from_port: int, to_node: Str
 	var new_text: String = document.text
 
 	if from_graph_node.kind in [DMGraphNode.Kind.DIALOGUE, DMGraphNode.Kind.RESPONSE]:
-		new_text = DMGraphSerializer.set_inline_goto(new_text, from_graph_node, target, false)
+		new_text = DMGraphSerializer.set_inline_goto(
+			new_text,
+			from_graph_node,
+			target,
+			from_graph_node.get_property("goto_is_snippet", false)
+		)
 	elif from_graph_node.kind == DMGraphNode.Kind.JUMP:
 		new_text = DMGraphSerializer.set_jump_target(
 			new_text,
@@ -543,8 +567,8 @@ func _on_end_node_move() -> void:
 func _on_add_node_pressed(kind: int) -> void:
 	if document == null:
 		return
-	if kind != 2 and selected_node == null:
-		_set_status("Select a node first.")
+	if kind != 2 and (selected_node == null or selected_node.source_start < 0):
+		_set_status("Select a node with a source line first.")
 		return
 
 	var new_text: String = document.text
@@ -574,7 +598,7 @@ func _on_auto_layout_pressed() -> void:
 
 
 func _on_test_pressed() -> void:
-	if selected_node == null:
+	if selected_node == null or selected_node.source_start < 0:
 		return
 	if selected_node.kind == DMGraphNode.Kind.CUE:
 		test_requested.emit(selected_node.get_property("cue", ""))

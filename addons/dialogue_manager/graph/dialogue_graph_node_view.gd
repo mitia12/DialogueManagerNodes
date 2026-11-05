@@ -83,7 +83,10 @@ func setup(node: DMGraphNode, doc: DMGraphDocument) -> void:
 		DMGraphNode.Kind.USING:
 			_add_port_row("using " + _short(node.get_property("state", "")), false, false, color)
 
-		DMGraphNode.Kind.COMMENT, DMGraphNode.Kind.NOTE:
+		DMGraphNode.Kind.COMMENT:
+			_add_port_row(_short(node.get_property("text", "")), true, true, color)
+
+		DMGraphNode.Kind.NOTE:
 			_add_port_row(_short(node.get_property("text", "")), false, false, color)
 
 	set_error_state(false)

@@ -161,6 +161,20 @@ static func _build_line_nodes(doc: DMGraphDocument, result: DMCompilerResult) ->
 			DMConstants.TYPE_CUE:
 				continue
 
+			DMConstants.TYPE_COMMENT:
+				var comment_node: DMGraphNode = DMGraphNode.new(node_id, DMGraphNode.Kind.COMMENT)
+				comment_node.stable_key = "comment:%s" % [raw_line.sha1_text()]
+				comment_node.source_start = source_start
+				comment_node.source_end = source_start
+				comment_node.indent = indent
+				comment_node.properties = {
+					text = raw_line.strip_edges(),
+					next_id = line.get("next_id", "")
+				}
+				comment_node.add_port("out", "flow", Color(0.5, 0.5, 0.5))
+				doc.add_node(comment_node)
+				doc.line_nodes[line_id] = comment_node.id
+
 			DMConstants.TYPE_RESPONSE:
 				var response_node: DMGraphNode = _make_response_node(node_id, stable_key, line, raw_line, source_start, source_end, indent)
 				doc.add_node(response_node)
@@ -463,11 +477,11 @@ static func _make_match_node(
 	node.indent = indent
 	node.properties = {
 		expression = _extract_condition(raw_line),
-		cases = Array(line.get("siblings", [])),
+		cases = Array(line.get("cases", [])),
 		next_id_after = line.get("next_id_after", "")
 	}
 
-	for case: Dictionary in Array(line.get("siblings", [])):
+	for case: Dictionary in Array(line.get("cases", [])):
 		var label: String = "else" if case.get("is_else", false) else "when %s" % [case.get("condition", "")]
 		node.add_port(label, "case", Color(0.7, 0.45, 0.9))
 	node.add_port("After", "after", Color(0.5, 0.5, 0.5))
@@ -671,6 +685,9 @@ static func _build_edges(doc: DMGraphDocument, _result: DMCompilerResult) -> voi
 				for i: int in random_branches.size():
 					_add_branch(doc, node, i, random_branches[i].get("id", ""))
 				_add_flow(doc, node, node.get_property("next_id_after", ""), node.ports.size() - 1)
+
+			DMGraphNode.Kind.COMMENT:
+				_add_flow(doc, node, node.get_property("next_id", ""))
 
 			DMGraphNode.Kind.CONCURRENT:
 				pass
