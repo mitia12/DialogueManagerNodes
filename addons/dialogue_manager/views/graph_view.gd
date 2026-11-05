@@ -167,7 +167,8 @@ func _build_ui() -> void:
 	toolbar.add_child(add_button)
 
 	var auto_button: Button = Button.new()
-	auto_button.text = "Auto layout"
+	auto_button.text = "Arrange all nodes"
+	auto_button.tooltip_text = "Automatically arrange all nodes"
 	auto_button.pressed.connect(_on_auto_layout_pressed)
 	toolbar.add_child(auto_button)
 
@@ -198,6 +199,7 @@ func _build_ui() -> void:
 	graph_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	graph_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	graph_edit.show_grid = true
+	graph_edit.set_show_arrange_button(false)
 	graph_edit.snapping_enabled = true
 	graph_edit.snapping_distance = 20
 	graph_edit.panning_scheme = GraphEdit.SCROLL_ZOOMS
