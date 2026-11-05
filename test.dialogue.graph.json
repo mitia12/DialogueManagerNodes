@@ -1,0 +1,176 @@
+{
+	"file": "res://test.dialogue",
+	"groups": [],
+	"nodes": {
+		"choices:response:0bb91741d63aac0db73c730dd4565470458880f9:3": {
+			"collapsed": false,
+			"position": [
+				-940.0,
+				1600.0
+			],
+			"size": [
+				248.000091552734,
+				220.0
+			],
+			"source_start": 3
+		},
+		"cue:start": {
+			"collapsed": false,
+			"position": [
+				0.0,
+				180.0
+			],
+			"size": [
+				248.0,
+				70.0001220703125
+			],
+			"source_start": 0
+		},
+		"dialogue:6e1467709a8e9e0740a87b44b685398c33ee8b7c": {
+			"collapsed": false,
+			"position": [
+				-740.0,
+				860.0
+			],
+			"size": [
+				248.000030517578,
+				118.000030517578
+			],
+			"source_start": 9
+		},
+		"dialogue:a0431a60e48847933398c7f1e1d4bd5012b8c353": {
+			"collapsed": false,
+			"position": [
+				400.0,
+				1560.0
+			],
+			"size": [
+				248.0,
+				94.0
+			],
+			"source_start": 6
+		},
+		"dialogue:a2a04efff225e1343d4c16aed145da36a1725a22": {
+			"collapsed": false,
+			"position": [
+				0.0,
+				2340.0
+			],
+			"size": [
+				248.0,
+				94.0
+			],
+			"source_start": 2
+		},
+		"dialogue:f127fda34c6f90fb7c205cdf1891bd68c8f81398": {
+			"collapsed": false,
+			"position": [
+				0.0,
+				2540.0
+			],
+			"size": [
+				248.0,
+				118.0
+			],
+			"source_start": 1
+		},
+		"dialogue:f5c7b388a5a627d77612cb29cd96f3a094736bd5": {
+			"collapsed": false,
+			"position": [
+				-640.0,
+				1120.0
+			],
+			"size": [
+				248.0,
+				94.0000305175781
+			],
+			"source_start": 4
+		},
+		"end": {
+			"collapsed": false,
+			"position": [
+				1020.0,
+				1040.0
+			],
+			"size": [
+				248.0,
+				70.0001220703125
+			],
+			"source_start": -1
+		},
+		"end!": {
+			"collapsed": false,
+			"position": [
+				0.0,
+				0.0
+			],
+			"size": [
+				248.0,
+				70.0
+			],
+			"source_start": -1
+		},
+		"jump:7a92f3d26362d6557d5701de77a63a01df61e57f:false": {
+			"collapsed": false,
+			"position": [
+				-300.0,
+				840.0
+			],
+			"size": [
+				248.000061035156,
+				70.0000610351563
+			],
+			"source_start": 10
+		},
+		"response:0bb91741d63aac0db73c730dd4565470458880f9:3": {
+			"collapsed": false,
+			"position": [
+				-340.0,
+				1460.0
+			],
+			"size": [
+				248.000061035156,
+				70.0000305175781
+			],
+			"source_start": 3
+		},
+		"response:2ded4e2eb0fa5c51509ffd549a34f5ef9b0b72c4:8": {
+			"collapsed": false,
+			"position": [
+				420.0,
+				1160.0
+			],
+			"size": [
+				248.000305175781,
+				100.000091552734
+			],
+			"source_start": 8
+		},
+		"response:37a8c492c7f0bebdcd87a5ac36ab0cde406db805:5": {
+			"collapsed": false,
+			"position": [
+				-180.0,
+				1740.0
+			],
+			"size": [
+				248.000030517578,
+				70.0000305175781
+			],
+			"source_start": 5
+		},
+		"response:b6fffc5ab71ca7dff2ef12cdf4d3dc83bdc6e358:7": {
+			"collapsed": false,
+			"position": [
+				160.0,
+				1340.0
+			],
+			"size": [
+				248.000061035156,
+				100.000030517578
+			],
+			"source_start": 7
+		}
+	},
+	"settings": {},
+	"version": 1
+}
