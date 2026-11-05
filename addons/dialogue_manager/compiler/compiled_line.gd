@@ -110,6 +110,8 @@ func to_data() -> Dictionary:
 
 		DMConstants.TYPE_RANDOM:
 			d.siblings = siblings
+			if not next_id_after.is_empty():
+				d.next_id_after = next_id_after
 
 		DMConstants.TYPE_RESPONSE:
 			d.text = text
@@ -157,6 +159,8 @@ func to_data() -> Dictionary:
 				d.siblings = siblings
 			if not concurrent_lines.is_empty():
 				d.concurrent_lines = concurrent_lines
+			if not next_id_after.is_empty():
+				d.next_id_after = next_id_after
 
 	return d
 

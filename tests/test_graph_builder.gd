@@ -109,7 +109,9 @@ func test_builds_concurrent_lines() -> void:
 
 
 func test_builds_imports() -> void:
-	var text: String = "import \"res://snippets.dialogue\" as snippets\n~ start\n=>< snippets/banter\n=> END"
+	DMCache.add_file("res://tests/snippets.dialogue")
+
+	var text: String = "import \"res://tests/snippets.dialogue\" as snippets\n~ start\n=>< snippets/snippet\n=> END"
 	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
 
 	assert(doc.imports.size() == 1, "Should have one import.")
@@ -117,5 +119,5 @@ func test_builds_imports() -> void:
 
 	var jump: DMGraphNode = doc.get_node("line:2")
 	assert(jump != null, "Should have a jump node.")
-	assert(jump.get_property("target") == "snippets/banter", "Should jump to the imported cue.")
+	assert(jump.get_property("target") == "snippets/snippet", "Should jump to the imported cue.")
 	assert(jump.get_property("is_snippet") == true, "Should be a jump and return.")

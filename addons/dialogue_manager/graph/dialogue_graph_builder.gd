@@ -224,6 +224,7 @@ static func _build_line_nodes(doc: DMGraphDocument, result: DMCompilerResult) ->
 					"match:%s" % [stable_key],
 					line,
 					raw_line,
+					doc,
 					source_start,
 					source_end,
 					indent
@@ -485,6 +486,7 @@ static func _make_match_node(
 	stable_key: String,
 	line: Dictionary,
 	raw_line: String,
+	doc: DMGraphDocument,
 	source_start: int,
 	source_end: int,
 	indent: int

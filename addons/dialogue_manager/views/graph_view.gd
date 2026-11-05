@@ -11,6 +11,7 @@ signal node_selected(node: DMGraphNode)
 var document: DMGraphDocument
 var is_syncing: bool = false
 var is_dirty: bool = false
+var is_building: bool = false
 var current_path: String = ""
 
 var graph_edit: GraphEdit
@@ -47,8 +48,9 @@ func clear_document() -> void:
 	node_views.clear()
 	if is_instance_valid(graph_edit):
 		for child: Node in graph_edit.get_children():
-			graph_edit.remove_child(child)
-			child.queue_free()
+			if child is GraphElement:
+				graph_edit.remove_child(child)
+				child.queue_free()
 	_build_inspector()
 
 
@@ -188,7 +190,8 @@ func _build_ui() -> void:
 	graph_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	graph_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	graph_edit.show_grid = true
-	graph_edit.snap_distance = 20
+	graph_edit.snapping_enabled = true
+	graph_edit.snapping_distance = 20
 	graph_edit.panning_scheme = GraphEdit.SCROLL_ZOOMS
 	graph_edit.zoom_min = 0.25
 	graph_edit.zoom_max = 2.0
@@ -222,12 +225,15 @@ func _build_graph() -> void:
 	if not is_instance_valid(graph_edit):
 		return
 
+	is_building = true
 	for child: Node in graph_edit.get_children():
-		graph_edit.remove_child(child)
-		child.queue_free()
+		if child is GraphElement:
+			graph_edit.remove_child(child)
+			child.queue_free()
 	node_views.clear()
 
 	if document == null:
+		is_building = false
 		return
 
 	for node: DMGraphNode in document.nodes.values():
@@ -270,6 +276,7 @@ func _build_graph() -> void:
 		graph_edit.arrange_nodes()
 
 	_apply_errors()
+	is_building = false
 
 
 func _build_inspector() -> void:
@@ -619,7 +626,7 @@ func _on_delete_nodes_request(nodes: Array) -> void:
 
 
 func _on_end_node_move() -> void:
-	if document == null:
+	if is_building or document == null:
 		return
 
 	for node_id: String in node_views:
