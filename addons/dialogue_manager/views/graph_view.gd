@@ -1092,16 +1092,17 @@ func _open_localization_panel() -> void:
 	dialog.add_child(vbox)
 
 	var tree: Tree = Tree.new()
-	tree.columns = 5
+	tree.columns = 6
 	tree.column_titles_visible = true
 	tree.set_column_title(0, "Static ID")
 	tree.set_column_title(1, "Text")
 	tree.set_column_title(2, "Character")
 	tree.set_column_title(3, "Notes")
 	tree.set_column_title(4, "Status")
+	tree.set_column_title(5, "Preview")
 	tree.hide_root = true
 	tree.select_mode = Tree.SELECT_ROW
-	tree.custom_minimum_size = Vector2(700, 400)
+	tree.custom_minimum_size = Vector2(900, 400)
 	tree.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tree.item_selected.connect(func() -> void: _on_localization_item_selected(tree))
 	vbox.add_child(tree)
@@ -1161,6 +1162,11 @@ func _build_localization_rows(tree: Tree) -> void:
 		var text: String = node.get_property("text", "").replace("\n", " ")
 		var character: String = node.get_property("character", "")
 		var notes: String = node.get_property("notes", "").replace("\n", " ")
+		var preview: String = ""
+		if not static_id.is_empty():
+			preview = TranslationServer.translate(static_id)
+			if preview.is_empty() or preview == static_id:
+				preview = "(not translated)"
 
 		var status: String = "OK"
 		var color: Color = Color(0.6, 0.8, 0.6)
@@ -1177,6 +1183,7 @@ func _build_localization_rows(tree: Tree) -> void:
 		item.set_text(3, notes)
 		item.set_text(4, status)
 		item.set_custom_color(4, color)
+		item.set_text(5, preview)
 		item.set_metadata(0, node.id)
 
 
