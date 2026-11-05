@@ -176,7 +176,16 @@ static func _build_line_nodes(doc: DMGraphDocument, result: DMCompilerResult) ->
 				doc.line_nodes[line_id] = comment_node.id
 
 			DMConstants.TYPE_RESPONSE:
-				var response_node: DMGraphNode = _make_response_node(node_id, stable_key, line, raw_line, source_start, source_end, indent)
+				var response_node: DMGraphNode = _make_response_node(
+					node_id,
+					stable_key,
+					line,
+					raw_line,
+					source_start,
+					source_end,
+					indent,
+					result
+				)
 				doc.add_node(response_node)
 				doc.line_nodes[line_id] = response_node.id
 
@@ -320,6 +329,7 @@ static func _make_dialogue_node(
 	node.source_start = source_start
 	node.source_end = source_end
 	node.indent = indent
+	var goto: String = _extract_goto(raw_line)
 	node.properties = {
 		character = line.get("character", ""),
 		text = line.get("text", ""),
@@ -328,8 +338,8 @@ static func _make_dialogue_node(
 		notes = line.get("notes", ""),
 		concurrent_lines = Array(line.get("concurrent_lines", [])),
 		next_id = line.get("next_id", ""),
-		goto = _extract_goto(raw_line),
-		goto_is_snippet = "=><" in raw_line,
+		goto = goto,
+		goto_is_snippet = not goto.is_empty() and "=><" in raw_line,
 		raw_text = raw_line
 	}
 
@@ -351,24 +361,33 @@ static func _make_response_node(
 	raw_line: String,
 	source_start: int,
 	source_end: int,
-	indent: int
+	indent: int,
+	result: DMCompilerResult
 ) -> DMGraphNode:
 	var node: DMGraphNode = DMGraphNode.new(node_id, DMGraphNode.Kind.RESPONSE)
 	node.stable_key = stable_key
 	node.source_start = source_start
 	node.source_end = source_end
 	node.indent = indent
+	var goto: String = _extract_goto(raw_line)
 	node.properties = {
 		character = line.get("character", ""),
 		text = line.get("text", ""),
 		tags = Array(line.get("tags", [])),
 		static_id = line.get("static_id", ""),
+		notes = line.get("notes", ""),
 		condition = line.get("condition_as_text", ""),
 		next_id = line.get("next_id", ""),
-		goto = _extract_goto(raw_line),
-		goto_is_snippet = "=><" in raw_line,
+		goto = goto,
+		goto_is_snippet = not goto.is_empty() and "=><" in raw_line,
 		raw_text = raw_line
 	}
+
+	var inline_goto_id: String = "%s.1" % [line.get("id", "")]
+	if result.lines.has(inline_goto_id):
+		var inline_goto: Dictionary = result.lines[inline_goto_id]
+		node.set_property("next_id_after", inline_goto.get("next_id_after", ""))
+
 	node.add_port("out", "flow", Color(0.9, 0.75, 0.25))
 	if node.get_property("goto_is_snippet", false):
 		node.add_port("return", "return", Color(0.8, 0.6, 0.2))
@@ -441,7 +460,7 @@ static func _make_condition_node(
 
 		cases.append({
 			expression = _extract_condition(current_raw),
-			is_else = current_raw.strip_edges().begins_with("else"),
+			is_else = current_raw.strip_edges() == "else",
 			next_id = current.get("next_id", ""),
 			source_line = current_source
 		})
@@ -482,10 +501,32 @@ static func _make_match_node(
 	}
 
 	for case: Dictionary in Array(line.get("cases", [])):
-		var label: String = "else" if case.get("is_else", false) else "when %s" % [case.get("condition", "")]
+		var label: String = _match_case_label(doc, case, source_start, source_end)
 		node.add_port(label, "case", Color(0.7, 0.45, 0.9))
 	node.add_port("After", "after", Color(0.5, 0.5, 0.5))
 	return node
+
+
+static func _match_case_label(doc: DMGraphDocument, case: Dictionary, source_start: int, _source_end: int) -> String:
+	var next_id: String = case.get("next_id", "")
+	var child_source: int = _source_line_for_id(next_id)
+	if child_source < 0 or child_source >= doc.source_lines.size():
+		return "else" if case.get("is_else", false) else "when"
+
+	var child_indent: int = _indent_count(doc.source_lines[child_source])
+	for i: int in range(child_source - 1, source_start - 1, -1):
+		if i < 0 or i >= doc.source_lines.size():
+			continue
+		var raw_line: String = doc.source_lines[i]
+		if raw_line.strip_edges().is_empty():
+			continue
+		if _indent_count(raw_line) >= child_indent:
+			continue
+		var text: String = raw_line.strip_edges()
+		if text.begins_with("when ") or text == "else":
+			return text
+
+	return "else" if case.get("is_else", false) else "when"
 
 
 static func _make_while_node(
@@ -705,8 +746,12 @@ static func _build_edges(doc: DMGraphDocument, _result: DMCompilerResult) -> voi
 		for other: DMGraphNode in doc.nodes.values():
 			if other.id == node.id:
 				continue
-			if other.get_property("next_id", "") == while_line_id:
+			var next_id: String = other.get_property("next_id", "")
+			var next_id_after: String = other.get_property("next_id_after", "")
+			if next_id == while_line_id:
 				_add_edge_if_missing(doc, DMGraphEdge.new(other.id, _get_flow_port(other), node.id, 0, DMGraphEdge.Kind.RETURN, "loop"))
+			elif next_id_after == while_line_id:
+				_add_edge_if_missing(doc, DMGraphEdge.new(other.id, _get_return_port(other), node.id, 0, DMGraphEdge.Kind.RETURN, "loop"))
 
 	# Concurrent lines are attached to their origin dialogue line.
 	for node: DMGraphNode in doc.nodes.values():
@@ -750,10 +795,29 @@ static func _get_flow_port(node: DMGraphNode) -> int:
 			return 0
 
 
+static func _get_return_port(node: DMGraphNode) -> int:
+	match node.kind:
+		DMGraphNode.Kind.CHOICES, DMGraphNode.Kind.CONDITION, DMGraphNode.Kind.MATCH, DMGraphNode.Kind.RANDOM:
+			return node.ports.size() - 1
+		DMGraphNode.Kind.DIALOGUE, DMGraphNode.Kind.RESPONSE, DMGraphNode.Kind.JUMP:
+			return 1 if node.ports.size() > 1 else 0
+		_:
+			return 0
+
+
 static func _add_flow(doc: DMGraphDocument, node: DMGraphNode, line_id: String, port: int = 0) -> void:
 	var target_id: String = _target_node_id(doc, line_id)
 	if target_id.is_empty():
 		return
+
+	# A while loop's last body line points back to the while line. The dedicated
+	# while-loop pass adds that as a RETURN edge, so don't duplicate it here.
+	var target_node: DMGraphNode = doc.get_node(target_id)
+	if target_node != null \
+		and target_node.kind == DMGraphNode.Kind.WHILE \
+		and target_node.get_property("line_id", "") == line_id:
+		return
+
 	_add_edge_if_missing(doc, DMGraphEdge.new(node.id, port, target_id, 0, DMGraphEdge.Kind.FLOW, ""))
 
 
@@ -889,7 +953,10 @@ static func _stable_key(line: Dictionary, index: int) -> String:
 		DMConstants.TYPE_MUTATION:
 			return "mutation:%s" % [str(line.get("mutation", {})).sha1_text()]
 		DMConstants.TYPE_GOTO:
-			return "jump:%s" % [str(line.get("next_id", "")).sha1_text()]
+			return "jump:%s:%s" % [
+				str(line.get("next_id", "")).sha1_text(),
+				str(line.get("is_snippet", false))
+			]
 		DMConstants.TYPE_RANDOM:
 			return "random:%s" % [str(line.get("siblings", [])).sha1_text()]
 		_:
@@ -897,8 +964,13 @@ static func _stable_key(line: Dictionary, index: int) -> String:
 
 
 static func _extract_goto(raw_line: String) -> String:
+	var line: String = raw_line
+	var static_id: String = DMCompiler.get_static_line_id(line)
+	if not static_id.is_empty():
+		line = line.replace("[ID:%s]" % [static_id], "").strip_edges()
+
 	var regex: DMCompilerRegEx = DMCompilerRegEx.new()
-	var found: RegExMatch = regex.GOTO_REGEX.search(raw_line)
+	var found: RegExMatch = regex.GOTO_REGEX.search(line)
 	if found:
 		return found.strings[found.names.goto].strip_edges()
 	return ""

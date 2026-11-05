@@ -112,7 +112,7 @@ func select_node(node_id: String) -> void:
 	selected_node = view.graph_node
 	_build_inspector()
 
-	if is_instance_valid(graph_edit):
+	if is_instance_valid(graph_edit) and graph_edit.is_visible_in_tree():
 		graph_edit.scroll_offset = view.position_offset - graph_edit.size / 2
 
 
@@ -252,12 +252,21 @@ func _build_graph() -> void:
 		var to_name: StringName = StringName(DMGraphNodeView.safe_name(edge.to_node))
 		graph_edit.connect_node(from_name, from_slot, to_name, edge.to_port)
 
-	var has_positions: bool = false
+	var has_saved_positions: bool = false
 	for node: DMGraphNode in document.nodes.values():
-		if node.position != Vector2.ZERO:
-			has_positions = true
+		if node.has_saved_position:
+			has_saved_positions = true
 			break
-	if not has_positions:
+
+	if has_saved_positions:
+		for node: DMGraphNode in document.nodes.values():
+			if node.has_saved_position:
+				continue
+			var default_position: Vector2 = Vector2(400, 0) if node.source_start < 0 else Vector2(0, (node.source_start + 1) * 140)
+			node.position = default_position
+			if node_views.has(node.id):
+				node_views[node.id].position_offset = default_position
+	else:
 		graph_edit.arrange_nodes()
 
 	_apply_errors()
@@ -292,17 +301,25 @@ func _build_inspector() -> void:
 			_add_line_edit("tags", ", ".join(PackedStringArray(selected_node.get_property("tags", []))))
 			_add_label("Static ID")
 			_add_line_edit("static_id", selected_node.get_property("static_id", ""))
+			_add_label("Translator note")
+			_add_read_only_text(selected_node.get_property("notes", ""))
 			_add_apply_button()
 
 		DMGraphNode.Kind.RESPONSE:
+			_add_label("Character")
+			_add_line_edit("character", selected_node.get_property("character", ""))
 			_add_label("Prompt")
 			_add_line_edit("text", selected_node.get_property("text", ""))
+			_add_label("Tags")
+			_add_line_edit("tags", ", ".join(PackedStringArray(selected_node.get_property("tags", []))))
 			_add_label("Condition")
 			_add_line_edit("condition", selected_node.get_property("condition", ""))
 			_add_label("Goto")
 			_add_line_edit("goto", selected_node.get_property("goto", ""))
 			_add_label("Static ID")
 			_add_line_edit("static_id", selected_node.get_property("static_id", ""))
+			_add_label("Translator note")
+			_add_read_only_text(selected_node.get_property("notes", ""))
 			_add_apply_button()
 
 		DMGraphNode.Kind.CUE:
@@ -323,6 +340,11 @@ func _build_inspector() -> void:
 			_add_label("Expression")
 			_add_line_edit("expression", selected_node.get_property("expression", ""))
 			_add_check_box("is_blocking", selected_node.get_property("is_blocking", true), "Blocking")
+			_add_apply_button()
+
+		DMGraphNode.Kind.COMMENT:
+			_add_label("Comment")
+			_add_line_edit("text", selected_node.get_property("text", ""))
 			_add_apply_button()
 
 		_:
@@ -358,6 +380,14 @@ func _add_text_edit(key: String, value: String) -> TextEdit:
 	return edit
 
 
+func _add_read_only_text(value: String) -> void:
+	var edit: TextEdit = TextEdit.new()
+	edit.text = value
+	edit.editable = false
+	edit.custom_minimum_size = Vector2(0, 60)
+	inspector.add_child(edit)
+
+
 func _add_check_box(key: String, value: bool, text: String) -> CheckBox:
 	var check: CheckBox = CheckBox.new()
 	check.text = text
@@ -391,7 +421,9 @@ func _on_apply_inspector_pressed() -> void:
 
 		DMGraphNode.Kind.RESPONSE:
 			var response_properties: Dictionary = {
+				character = inspector_fields["character"].text,
 				text = inspector_fields["text"].text,
+				tags = _parse_tags(inspector_fields["tags"].text),
 				condition = inspector_fields["condition"].text,
 				goto = inspector_fields["goto"].text,
 				static_id = inspector_fields["static_id"].text
@@ -402,12 +434,21 @@ func _on_apply_inspector_pressed() -> void:
 			new_text = DMGraphSerializer.set_cue_name(new_text, selected_node, inspector_fields["name"].text)
 
 		DMGraphNode.Kind.JUMP:
-			new_text = DMGraphSerializer.set_jump_target(
-				new_text,
-				selected_node,
-				inspector_fields["target"].text,
-				inspector_fields["is_snippet"].button_pressed
-			)
+			var jump_raw_text: String = selected_node.get_property("raw_text", "")
+			if jump_raw_text.strip_edges().begins_with("%"):
+				new_text = DMGraphSerializer.set_inline_goto(
+					new_text,
+					selected_node,
+					inspector_fields["target"].text,
+					inspector_fields["is_snippet"].button_pressed
+				)
+			else:
+				new_text = DMGraphSerializer.set_jump_target(
+					new_text,
+					selected_node,
+					inspector_fields["target"].text,
+					inspector_fields["is_snippet"].button_pressed
+				)
 
 		DMGraphNode.Kind.MUTATION:
 			new_text = DMGraphSerializer.set_mutation_expression(
@@ -416,6 +457,9 @@ func _on_apply_inspector_pressed() -> void:
 				inspector_fields["expression"].text,
 				inspector_fields["is_blocking"].button_pressed
 			)
+
+		DMGraphNode.Kind.COMMENT:
+			new_text = DMGraphSerializer.set_comment_text(new_text, selected_node, inspector_fields["text"].text)
 
 		_:
 			return
@@ -467,14 +511,25 @@ func _on_connection_request(from_node: StringName, _from_port: int, to_node: Str
 			from_graph_node.get_property("goto_is_snippet", false)
 		)
 	elif from_graph_node.kind == DMGraphNode.Kind.JUMP:
-		new_text = DMGraphSerializer.set_jump_target(
-			new_text,
-			from_graph_node,
-			target,
-			from_graph_node.get_property("is_snippet", false)
-		)
+		var raw_text: String = from_graph_node.get_property("raw_text", "")
+		if raw_text.strip_edges().begins_with("%"):
+			new_text = DMGraphSerializer.set_inline_goto(
+				new_text,
+				from_graph_node,
+				target,
+				from_graph_node.get_property("is_snippet", false)
+			)
+		else:
+			new_text = DMGraphSerializer.set_jump_target(
+				new_text,
+				from_graph_node,
+				target,
+				from_graph_node.get_property("is_snippet", false)
+			)
+	elif from_graph_node.kind == DMGraphNode.Kind.CUE:
+		new_text = DMGraphSerializer.add_jump_after(new_text, from_graph_node, target, false)
 	else:
-		_set_status("Connect from a dialogue, response, or jump node.")
+		_set_status("Connect from a dialogue, response, jump, or cue node.")
 		return
 
 	_apply_text(new_text, "Connect to cue")
@@ -509,7 +564,7 @@ func _on_popup_request(at_position: Vector2) -> void:
 	menu.id_pressed.connect(_on_popup_menu_id_pressed)
 	menu.popup_hide.connect(menu.queue_free)
 	add_child(menu)
-	menu.position = Vector2i(get_screen_position() + at_position)
+	menu.position = Vector2i(graph_edit.get_screen_position() + at_position)
 	menu.popup()
 
 
@@ -540,6 +595,19 @@ func _on_delete_nodes_request(nodes: Array) -> void:
 		if graph_node != null:
 			graph_nodes.append(graph_node)
 
+	var filtered: Array[DMGraphNode] = []
+	for graph_node: DMGraphNode in graph_nodes:
+		var is_contained: bool = false
+		for other: DMGraphNode in graph_nodes:
+			if other == graph_node:
+				continue
+			if other.source_start <= graph_node.source_start and graph_node.source_end <= other.source_end:
+				is_contained = true
+				break
+		if not is_contained:
+			filtered.append(graph_node)
+	graph_nodes = filtered
+
 	graph_nodes.sort_custom(func(a: DMGraphNode, b: DMGraphNode) -> bool:
 		return a.source_start > b.source_start
 	)
@@ -569,6 +637,10 @@ func _on_add_node_pressed(kind: int) -> void:
 		return
 	if kind != 2 and (selected_node == null or selected_node.source_start < 0):
 		_set_status("Select a node with a source line first.")
+		return
+
+	if kind == 1 and selected_node.kind not in [DMGraphNode.Kind.DIALOGUE, DMGraphNode.Kind.CHOICES, DMGraphNode.Kind.RESPONSE]:
+		_set_status("Select a dialogue, choices, or response node to add a response.")
 		return
 
 	var new_text: String = document.text

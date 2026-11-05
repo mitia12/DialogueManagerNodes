@@ -80,10 +80,22 @@ static func apply_to_document(document: DMGraphDocument, data: Dictionary) -> vo
 	var node_data: Dictionary = data.get("nodes", {})
 	for node: DMGraphNode in document.nodes.values():
 		var key: String = node.stable_key if not node.stable_key.is_empty() else node.id
-		if not node_data.has(key):
+		var saved: Dictionary = {}
+
+		if node_data.has(key):
+			saved = node_data[key]
+		elif node.source_start >= 0:
+			# Fall back to the source line when an edit changed the stable key.
+			for saved_key: String in node_data:
+				var candidate: Dictionary = node_data[saved_key]
+				if candidate.get("source_start", -1) == node.source_start:
+					saved = candidate
+					break
+
+		if saved.is_empty():
 			continue
 
-		var saved: Dictionary = node_data[key]
+		node.has_saved_position = true
 		var position_data: Array = saved.get("position", [])
 		if position_data.size() == 2:
 			node.position = Vector2(position_data[0], position_data[1])
@@ -100,7 +112,8 @@ static func collect_from_document(document: DMGraphDocument) -> Dictionary:
 		node_data[key] = {
 			position = [node.position.x, node.position.y],
 			size = [node.size.x, node.size.y],
-			collapsed = node.collapsed
+			collapsed = node.collapsed,
+			source_start = node.source_start
 		}
 
 	return {

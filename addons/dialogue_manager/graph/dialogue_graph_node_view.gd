@@ -11,7 +11,7 @@ func setup(node: DMGraphNode, doc: DMGraphDocument) -> void:
 	document = doc
 
 	name = safe_name(node.id)
-	title = _get_kind_title(node.kind)
+	title = "End" if node.source_start < 0 else _get_kind_title(node.kind)
 	position_offset = node.position
 	custom_minimum_size = Vector2(240, 0)
 	size = node.size if node.size != Vector2.ZERO else Vector2(240, 0)
@@ -23,16 +23,28 @@ func setup(node: DMGraphNode, doc: DMGraphDocument) -> void:
 
 	match node.kind:
 		DMGraphNode.Kind.CUE:
-			_add_port_row("~ " + str(node.get_property("cue", "")), true, true, color)
+			var cue_label: String = "~ " + str(node.get_property("cue", ""))
+			if node.get_property("is_first", false):
+				cue_label = "★ " + cue_label
+			_add_port_row(cue_label, true, true, color)
 
 		DMGraphNode.Kind.DIALOGUE:
 			var character: String = node.get_property("character", "")
 			var text: String = node.get_property("text", "")
 			var label: String = text if character.is_empty() else "%s: %s" % [character, text]
 			_add_port_row(_short(label), true, true, color)
+			if node.get_property("goto_is_snippet", false):
+				_add_port_row("Return", false, true, color)
+			_add_goto_label(node)
 
 		DMGraphNode.Kind.RESPONSE:
-			_add_port_row("- " + _short(node.get_property("text", "")), true, true, color)
+			var response_character: String = node.get_property("character", "")
+			var response_text: String = node.get_property("text", "")
+			var response_label: String = response_text if response_character.is_empty() else "%s: %s" % [response_character, response_text]
+			_add_port_row("- " + _short(response_label), true, true, color)
+			if node.get_property("goto_is_snippet", false):
+				_add_port_row("Return", false, true, color)
+			_add_goto_label(node)
 
 		DMGraphNode.Kind.CHOICES:
 			_add_port_row("Choices", true, false, color)
@@ -112,6 +124,22 @@ func get_port_slot_offset() -> int:
 			return 1
 		_:
 			return 0
+
+
+func _add_goto_label(node: DMGraphNode) -> void:
+	var goto: String = node.get_property("goto", "")
+	if goto.is_empty():
+		return
+	var prefix: String = "↩ " if node.get_property("goto_is_snippet", false) else "→ "
+	_add_plain_label(prefix + goto)
+
+
+func _add_plain_label(text: String) -> void:
+	var label: Label = Label.new()
+	label.text = text
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.custom_minimum_size = Vector2(200, 0)
+	add_child(label)
 
 
 func _add_port_row(text: String, has_input: bool, has_output: bool, color: Color) -> HBoxContainer:

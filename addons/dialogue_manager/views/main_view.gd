@@ -515,6 +515,7 @@ func _on_cache_file_content_changed(path: String, new_content: String) -> void:
 				cue_list.cues = code_edit.get_cues(true)
 				if is_instance_valid(graph_view) and graph_view.visible:
 					graph_view.sync_from_text(new_content)
+					compile()
 		buffer.pristine_text = new_content
 
 
@@ -717,15 +718,17 @@ func _on_cue_list_cue_selected(cue: String) -> void:
 
 func _on_parse_timer_timeout() -> void:
 	parse_timer.stop()
-	compile()
 	if is_instance_valid(graph_view) and graph_view.visible:
 		graph_view.sync_from_text(code_edit.text)
+	compile()
 
 
 func _on_errors_panel_error_pressed(line_number: int, column_number: int) -> void:
 	code_edit.set_caret_line(line_number - 1)
 	code_edit.set_caret_column(column_number)
 	code_edit.grab_focus()
+	if is_instance_valid(graph_view):
+		graph_view.select_line(line_number)
 
 
 func _on_search_button_toggled(button_pressed: bool) -> void:

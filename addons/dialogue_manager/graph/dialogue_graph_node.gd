@@ -36,6 +36,8 @@ var properties: Dictionary = {}
 var position: Vector2 = Vector2.ZERO
 var size: Vector2 = Vector2.ZERO
 var collapsed: bool = false
+## Runtime-only flag: whether the sidecar provided a position for this node.
+var has_saved_position: bool = false
 
 
 func _init(initial_id: String = "", initial_kind: Kind = Kind.DIALOGUE) -> void:

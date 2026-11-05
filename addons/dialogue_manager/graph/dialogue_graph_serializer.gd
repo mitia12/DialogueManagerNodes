@@ -44,7 +44,9 @@ static func set_response_properties(text: String, node: DMGraphNode, properties:
 		end = start
 
 	var indent: String = _line_indent(lines[start])
+	var character: String = properties.get("character", node.get_property("character", ""))
 	var prompt: String = properties.get("text", node.get_property("text", ""))
+	var tags: PackedStringArray = PackedStringArray(properties.get("tags", node.get_property("tags", [])))
 	var condition: String = properties.get("condition", node.get_property("condition", ""))
 	var goto: String = properties.get("goto", node.get_property("goto", ""))
 	var goto_is_snippet: bool = properties.get("goto_is_snippet", node.get_property("goto_is_snippet", false))
@@ -52,14 +54,14 @@ static func set_response_properties(text: String, node: DMGraphNode, properties:
 	var old_text: String = node.get_property("text", "")
 
 	if end > start and prompt == old_text:
-		lines[start] = indent + _format_response_line(prompt, condition, goto, static_id, goto_is_snippet)
+		lines[start] = indent + _format_response_line(prompt, condition, goto, static_id, goto_is_snippet, character, tags)
 		return "\n".join(PackedStringArray(lines))
 
 	var replacement: PackedStringArray = []
 	var prompt_lines: PackedStringArray = prompt.split("\n")
 	for i: int in prompt_lines.size():
 		if i == 0:
-			replacement.append(indent + _format_response_line(prompt_lines[i], condition, goto, static_id, goto_is_snippet))
+			replacement.append(indent + _format_response_line(prompt_lines[i], condition, goto, static_id, goto_is_snippet, character, tags))
 		else:
 			replacement.append(indent + "\t" + prompt_lines[i])
 	return replace_lines(text, start, end, replacement)
@@ -120,6 +122,17 @@ static func set_inline_goto(text: String, node: DMGraphNode, target: String, is_
 		line += " [ID:%s]" % [static_id]
 
 	lines[start] = line
+	return "\n".join(PackedStringArray(lines))
+
+
+static func set_comment_text(text: String, node: DMGraphNode, comment: String) -> String:
+	var lines: Array = Array(text.split("\n"))
+	var start: int = node.source_start
+	if start < 0 or start >= lines.size():
+		return text
+
+	var indent: String = _line_indent(lines[start])
+	lines[start] = indent + comment
 	return "\n".join(PackedStringArray(lines))
 
 
@@ -290,9 +303,16 @@ static func _format_response_line(
 	condition: String,
 	goto: String,
 	static_id: String,
-	goto_is_snippet: bool = false
+	goto_is_snippet: bool = false,
+	character: String = "",
+	tags: PackedStringArray = []
 ) -> String:
-	var line: String = "- " + prompt
+	var line: String = prompt
+	if tags.size() > 0:
+		line = "[#%s] %s" % [", ".join(tags), line]
+	if not character.is_empty():
+		line = "%s: %s" % [character, line]
+	line = "- " + line
 	if not condition.is_empty():
 		line += " [if %s /]" % [condition]
 	if not goto.is_empty():
