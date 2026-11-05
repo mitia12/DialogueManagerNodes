@@ -6,6 +6,11 @@
 в виде связанных узлов и поддерживать весь заявленный функционал аддона, включая
 локализацию.
 
+> **Статус документа:** разделы 1–17 описывают исходный проектный замысел.
+> Разделы **18–21** обновлены по фактической реализации: сигнатуры, чек-лист,
+> текущий статус и changelog. Если проектный текст расходится с фактическим
+> поведением, приоритет имеет раздел **20–21**.
+
 ---
 
 ## 1. Кратко
@@ -26,6 +31,12 @@
   переводчикам, имена персонажей, экспорт POT/CSV.
 - Сохранение, компиляция, тестовый запуск, поиск, панель ошибок и локализация
   используют уже существующую инфраструктуру аддона.
+
+> **Фактически:** реализованы режимы **Text** и **Graph** (без `Split`),
+> кнопка **Arrange all nodes**, редактирование и добавление/удаление
+> condition/match/random-кейсов, соединения с top-level узлами через
+> автосоздание `cue`, отсоединение переходов, панель **Localization**
+> и собственный layered layout. Подробности — в разделах 20–21.
 
 ### Что не делаем на первом этапе
 
@@ -54,10 +65,10 @@
 | Файл | Роль | Как используем |
 |---|---|---|
 | `addons/dialogue_manager/plugin.gd` | `EditorPlugin`: главный экран «Dialogue», импорт/экспорт, инспектор, переводы, debugger | Добавляем graph-режим в существующий `main_view`, новых main screen не создаём |
-| `addons/dialogue_manager/views/main_view.gd` | Текстовый редактор, буферы открытых файлов, компиляция, сохранение, тест | Расширяем: режимы Text/Graph/Split, общий буфер, синхронизация |
-| `addons/dialogue_manager/views/main_view.tscn` | UI главного экрана | Добавляем `GraphView`, переключатель режимов, панели |
+| `addons/dialogue_manager/views/main_view.gd` | Текстовый редактор, буферы открытых файлов, компиляция, сохранение, тест | Расширяем: режимы Text/Graph, общий буфер, синхронизация |
+| `addons/dialogue_manager/views/main_view.tscn` | UI главного экрана | Не менялся; `GraphView` и кнопка **Graph** создаются программно |
 | `addons/dialogue_manager/compiler/compiler.gd` | `DMCompiler.compile_string(text, path)` | Основной источник структуры для построения графа |
-| `addons/dialogue_manager/compiler/compilation.gd` | Парсер, дерево строк, `DMCompiledLine` | Добавляем source map и, при необходимости, доступ к дереву |
+| `addons/dialogue_manager/compiler/compilation.gd` | Парсер, дерево строк, `DMCompiledLine` | Используем `DMCompilerResult.lines`; source line восстанавливаем из line ID |
 | `addons/dialogue_manager/compiler/compiled_line.gd` | Данные скомпилированной строки | Используем `type`, `next_id`, `responses`, `siblings`, `expression` и т.д. |
 | `addons/dialogue_manager/import_plugin.gd` | Импорт `.dialogue` → `DialogueResource` | Не меняем; граф сохраняет текст, импортёр работает как раньше |
 | `addons/dialogue_manager/dialogue_resource.gd` | Runtime-ресурс | Не меняем |
@@ -98,15 +109,14 @@
 
 ### 2.3. Ограничения текущего кода
 
-- `DMCompiledLine` не хранит номер исходной строки и сырой текст. Для графа нужен
-  **source map** (см. раздел 6.2).
-- `when`-строки удаляются из `lines` после разбора `match`, поэтому для них нужен
-  доступ к дереву `DMTreeLine` или к сырым строкам.
+- `DMCompiledLine` не хранит номер исходной строки и сырой текст. Граф
+  восстанавливает source line из line ID и сырых строк (см. 5.2).
+- `when`-строки удаляются из `lines` после разбора `match`, поэтому их source
+  line ищется сканированием сырых строк.
 - Вложенные реплики (indented dialogue) компилятор склеивает в текст родительской
-  строки. В графе их лучше показывать как многострочный текст одной ноды, а не
-  как отдельные узлы.
-- `DMCompilation` — compile-time класс, но он доступен как `class_name`. Для
-  editor-only задач можно добавить безопасные поля, не влияя на runtime.
+  строки. В графе они показываются как многострочный текст одной ноды.
+- `DMCompilation` не менялся для source map; в `compiled_line.gd` добавлены
+  только `next_id_after` для response/dialogue/random.
 - В проекте уже есть предупреждения GDScript о нетипизированных объявлениях.
   Новый код пишем с типами, в стиле аддона (табы, `@tool`, `class_name DM...`).
 
@@ -129,7 +139,7 @@
     │
     │  DMCompiler.compile_string()
     ▼
-DMCompilerResult (lines, cues, errors, source map)
+DMCompilerResult (lines, cues, errors)
     │
     │  DMGraphBuilder
     ▼
@@ -167,15 +177,16 @@ Sidecar можно удалить без потери диалога: граф �
 Правильнее добавить в существующий `main_view` переключатель:
 
 ```
-[ Text ] [ Graph ] [ Split ]
+[ Graph ]
 ```
 
-- **Text** — текущий редактор, без изменений.
-- **Graph** — граф на всё окно.
-- **Split** — текст слева, граф справа (полезно для отладки и обучения).
+- **Text** — текущий редактор, без изменений (режим по умолчанию).
+- **Graph** — граф на всё окно, активируется кнопкой **Graph** в toolbar.
+- **Split** — проектное расширение на будущее (текст слева, граф справа);
+  в текущей реализации не добавлен.
 
-Все режимы используют один и тот же буфер `open_buffers[path]`, один процесс
-сохранения, одну компиляцию и одну панель ошибок.
+Оба фактических режима используют один и тот же буфер `open_buffers[path]`,
+один процесс сохранения, одну компиляцию и одну панель ошибок.
 
 ---
 
@@ -275,24 +286,35 @@ var label: String = ""
 ID компилятора — это номера строк (`"12"`, `"12.1"`), они меняются при любой
 вставке. Для sidecar и undo/redo нужны стабильные ключи.
 
-Правила генерации `stable_key`:
+Правила генерации `stable_key` (фактическая реализация):
 
-1. Если у строки есть `static_id` — `dialogue:<static_id>`.
-2. Для `cue` — `cue:<name>`.
-3. Для `response` — `response:<static_id или hash(prompt)>:<index>`.
-4. Для `condition` — `condition:<hash(expression)>:<index>`.
-5. Для `match` — `match:<hash(expression)>`.
-6. Для `random` — `random:<hash(weight+condition)>:<index>`.
-7. Для `jump` — `jump:<target>:<is_snippet>`.
-8. Иначе — `type:<hash(raw_text + parent_stable_key)>`.
+1. Реплика со `static_id` — `dialogue:<static_id>`.
+2. Реплика без `static_id` — `dialogue:<hash(character + ":" + text)>`.
+3. Ответ со `static_id` — `response:<static_id>`.
+4. Ответ без `static_id` — `response:<hash(text)>` (без source line, чтобы
+   позиция не терялась при вставке строк выше).
+5. `cue` — `cue:<name>`.
+6. `condition` — `condition:<hash(expression)>`.
+7. `match` — `match:<hash(condition)>`.
+8. `while` — `while:<hash(condition)>`.
+9. `mutation` — `mutation:<hash(mutation)>`.
+10. `jump` — `jump:<hash(next_id)>:<is_snippet>`.
+11. `random` — `random:<hash(siblings)>`.
+12. `comment` — `comment:<hash(raw_text)>`.
+13. `import` — `import:<path>`, `using` — `using:<state>`.
+14. Иначе — `<type>:<source_start>`.
 
-При перестроении графа узлы сопоставляются по `stable_key`. Если ключ не найден,
-узел считается новым и получает позицию из auto-layout. Если ключ исчез — позиция
-удаляется из sidecar (или хранится в «корзине» для undo).
+При перестроении графа узлы сопоставляются в таком порядке:
 
-> Важно: `stable_key` — эвристика. Для строк без static ID и с одинаковым текстом
-> возможны коллизии. Поэтому в sidecar дополнительно храним `source_line` и
-> `parent_key`, а при совпадении ключей уточняем по контексту.
+1. Точное совпадение `stable_key`.
+2. Точное совпадение `source_start`.
+3. Ближайший сохранённый узел того же `kind` (в пределах 8 строк).
+4. Если ничего не найдено — узел считается новым и получает позицию из
+   auto-layout (или колонку по source line, если часть позиций уже сохранена).
+
+Sidecar хранит `position`, `size`, `collapsed`, `source_start` и `kind`.
+Использованные записи помечаются, чтобы одна saved-позиция не применилась
+к нескольким узлам.
 
 ### 4.5. Sidecar-файл
 
@@ -303,34 +325,24 @@ ID компилятора — это номера строк (`"12"`, `"12.1"`),
 {
   "version": 1,
   "file": "res://dialogues/intro.dialogue",
-  "view": {
-    "zoom": 1.0,
-    "scroll": [0, 0],
-    "mode": "graph"
-  },
   "nodes": {
     "cue:start": {
       "position": [120, 80],
       "size": [220, 90],
       "collapsed": false,
-      "color": "#3b6ea5"
+      "source_start": 0,
+      "kind": 0
     },
     "dialogue:abc123": {
       "position": [120, 240],
-      "size": [320, 140]
+      "size": [320, 140],
+      "collapsed": false,
+      "source_start": 1,
+      "kind": 1
     }
   },
-  "groups": [
-    {
-      "title": "Intro",
-      "rect": [80, 40, 500, 400],
-      "color": "#2d4a6b"
-    }
-  ],
-  "settings": {
-    "hide_sequential_edges": false,
-    "compact_mode": false
-  }
+  "groups": [],
+  "settings": {}
 }
 ```
 
@@ -340,7 +352,8 @@ Sidecar:
 - перемещается вместе с `.dialogue` при `files_moved`;
 - удаляется при `file_removed`;
 - при конфликте версий — игнорируется, граф строится заново;
-- не обязателен для работы: без него используется auto-layout.
+- не обязателен для работы: без него используется собственный layered layout;
+- хранит `source_start` и `kind` для fallback-сопоставления позиций.
 
 ---
 
@@ -350,9 +363,9 @@ Sidecar:
 
 ```
 1. Прочитать текст файла.
-2. Вызвать DMCompiler.compile_string(text, path) (editor-режим с source map).
+2. Вызвать DMCompiler.compile_string(text, path).
 3. Разобрать файловые строки: import, using, комментарии.
-4. Построить source map: compiled_line_id -> диапазон исходных строк.
+4. Восстановить source line из line ID и отступов (см. 5.2).
 5. Создать узлы CUE для всех cues и first_cue.
 6. Пройти скомпилированные строки в порядке исходника.
 7. Сгруппировать:
@@ -367,53 +380,37 @@ Sidecar:
 10. Провалидировать и вернуть DMGraphDocument.
 ```
 
-### 5.2. Source map
+### 5.2. Source map (фактическая реализация)
 
-Нужно добавить в компилятор editor-only информацию. Минимальные изменения:
+Полноценный `for_editor` source map в компилятор **не добавлялся**. Вместо
+этого `DMGraphBuilder` использует уже существующий `DMCompilerResult.lines`
+и восстанавливает исходные строки сам:
 
-```gdscript
-# compiler/compiled_line.gd
-var source_line: int = -1       # 1-based номер строки в файле
-var source_end_line: int = -1   # 1-based, для вложенных блоков
-var raw_text: String = ""       # исходная строка без отступа
-var parent_id: String = ""      # ID родительской строки
-```
+- `DMCompilerResult.lines` — это `Dictionary` из `DMCompiledLine.to_data()`,
+  ключи — line ID (`"0"`, `"1"`, `"12.1"`).
+- `source_start` вычисляется из line ID: `id.split(".")[0].to_int()`.
+- Inline-goto строки с ID вида `"12.1"` пропускаются как отдельные узлы;
+  их `next_id_after` переносится на родительскую реплику/ответ.
+- `source_end` вычисляется через `_find_block_end()` по отступам.
+- `when`/`else`-строки не входят в `lines` (компилятор удаляет их после
+  разбора `match`), поэтому их source line ищется сканированием сырых строк
+  назад от первого дочернего узла (`_find_match_case_line()`).
+- `%`-строки случайных веток ищутся сканированием сырых строк на том же
+  отступе (`_find_random_branch_lines()`).
+- `import`/`using` разбираются из сырых строк в `_extract_imports()` и
+  `_build_file_nodes()`.
+- Комментарии `#`/`##` приходят как `TYPE_COMMENT` и превращаются в
+  `COMMENT`-узлы.
 
-```gdscript
-# compiler/compiler_result.gd
-var tree: DMTreeLine = null          # editor-only, для when/комментариев
-var source_lines: PackedStringArray = []
-var imports: Array[Dictionary] = []  # { path, alias, line }
-var comments: Array[Dictionary] = [] # { line, text, attached_to }
-```
+В `compiler/compiled_line.gd` были добавлены только недостающие поля
+`next_id_after` для `TYPE_RESPONSE`, `TYPE_DIALOGUE` и `TYPE_RANDOM`, чтобы
+граф мог строить продолжение после ответов, случайных групп и inline-goto.
+Остальные типы уже сохраняли `next_id_after` в `to_data()`.
 
-```gdscript
-# compiler/compiler.gd
-static func compile_string(text: String, path: String, for_editor: bool = false) -> DMCompilerResult:
-    var compilation: DMCompilation = DMCompilation.new()
-    compilation.collect_source_map = for_editor
-    compilation.compile(text, path)
-    ...
-    if for_editor:
-        result.tree = compilation.tree
-        result.source_lines = text.split("\n")
-        result.imports = compilation.imports
-        result.comments = compilation.comments
-    return result
-```
-
-В `DMCompilation`:
-
-- `var collect_source_map: bool = false`;
-- `var tree: DMTreeLine`;
-- `var imports: Array[Dictionary] = []`;
-- `var comments: Array[Dictionary] = []`;
-- в `build_line_tree()` сохранять `tree = root`, заполнять `imports` и `comments`;
-- в `parse_line_tree()` при `collect_source_map` проставлять `line.source_line`,
-  `line.source_end_line`, `line.raw_text`, `line.parent_id`.
-
-Для `when`-строк, которые удаляются из `lines`, данные берём из `tree`:
-находим `DMTreeLine` с нужным `id` и берём `line_number`, `text`, `children`.
+Для `match`-кейсов и random-веток в `DMGraphNode.properties` дополнительно
+хранятся `source_line`, `block_end`, `raw_text` и `expression`/`condition_text`.
+Это позволяет редактировать и удалять кейсы/ветки точечно, не перегенерируя
+весь файл.
 
 ### 5.3. Маппинг конструкций
 
@@ -593,19 +590,15 @@ static func build(text: String, path: String) -> DMGraphDocument:
     doc.text = text
     doc.source_lines = text.split("\n")
 
-    var result: DMCompilerResult = DMCompiler.compile_string(text, path, true)
+    var result: DMCompilerResult = DMCompiler.compile_string(text, path)
     doc.errors = result.errors
-    doc.cues = result.cues
-    doc.first_cue = result.first_cue
     doc.using_states = result.using_states
-    doc.imports = result.imports
+    doc.imports = _extract_imports(doc.source_lines)
 
     _build_file_nodes(doc, result)
     _build_cue_nodes(doc, result)
     _build_line_nodes(doc, result)
     _build_edges(doc, result)
-    _group_blocks(doc, result)
-    _attach_source_ranges(doc, result)
 
     return doc
 ```
@@ -666,15 +659,18 @@ var description: String = ""
 
 Граф не должен позволять связи, которые невозможно выразить текстом. Правила:
 
-1. **Последовательный поток** не рисуется пользователем вручную: он вычисляется
-   из порядка строк. Пользователь может менять порядок перетаскиванием.
+1. **Последовательный поток** вычисляется из порядка строк. Перетаскивание
+   узла меняет только его позицию на холсте, но не порядок строк в файле.
 2. **Ветвление** создаётся только через порты `CHOICES`, `CONDITION`, `MATCH`,
    `RANDOM`. Нельзя просто протянуть линию от реплики к реплике в другой ветке.
-3. **Переход** создаётся только на `CUE` (или `END`/`END!`). При протягивании
-   линии на cue редактор вставляет `=> cue` или `=>< cue`.
-4. **Межфайловый переход** — только на внешний cue из `import`.
-5. Если пользователь пытается создать недопустимую связь, показываем tooltip
-   и возвращаем линию назад.
+3. **Переход** создаётся на `CUE`, `END`/`END!` или на любой top-level узел.
+   Если у целевого узла нет cue, редактор автоматически вставляет
+   `~ goto_<id>` перед ним и ставит `=> goto_<id>` / `=>< goto_<id>`.
+4. **Межфайловый переход** — только на внешний cue из `import`; такие связи
+   отображаются как текст цели, но отдельный внешний узел не создаётся.
+5. Если пользователь пытается создать недопустимую связь (например, на
+   вложенный узел или branch-порт), показывается сообщение в status bar,
+   а связь не создаётся.
 
 Это ключевое ограничение, которое делает round-trip предсказуемым.
 
@@ -743,7 +739,7 @@ static func serialize_block(node: DMGraphNode, indent: int) -> PackedStringArray
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│ [Text] [Graph] [Split]  intro.dialogue   [+ Add] [Auto] [Test] ... │
+│ [Graph]  intro.dialogue  [Add] [Arrange all nodes] [Test] [Localization] │
 ├────────────────────────────────────────────────────────────────────┤
 │ ┌──────────────────────────────────────────┐ ┌───────────────────┐ │
 │ │                                          │ │ Inspector         │ │
@@ -761,30 +757,36 @@ static func serialize_block(node: DMGraphNode, indent: int) -> PackedStringArray
 │ │                                          │ │ └───────────────┘ │ │
 │ └──────────────────────────────────────────┘ └───────────────────┘ │
 ├────────────────────────────────────────────────────────────────────┤
-│ Errors (2) │ Cues │ Localization │ Outline                          │
+│ Errors (main view) │ Cues (main view) │ Localization (dialog)        │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-### 7.2. Toolbar
+### 7.2. Toolbar (фактическая реализация)
 
-- переключатель `Text / Graph / Split`;
-- имя файла и кнопка «показать в файловой системе»;
-- `+ Add` — меню добавления узла (Dialogue, Response, Condition, Match,
-  While, Mutation, Jump, Random, Comment);
-- `Auto layout` — `GraphEdit.arrange_nodes()` или собственный layered layout;
-- `Zoom` — `-`, `100%`, `+`, `Fit`;
-- `Search` — поиск по тексту, персонажу, ID, тегам;
-- `Test` — запуск с текущего cue/строки;
-- `Save` / `Save all`;
-- `Errors` — счётчик и переход к ошибке;
-- `Localization` — панель переводов;
-- `Settings` — настройки graph-режима.
+В `main_view`:
 
-### 7.3. Настройки `GraphEdit`
+- кнопка **Graph** — переключает Text/Graph;
+- остальные кнопки текстового редактора остаются как были.
+
+В `DMGraphView`:
+
+- **Add** — меню добавления узла (Dialogue, Response, Cue, Jump, Mutation,
+  Comment);
+- **Arrange all nodes** — собственный layered layout для всех узлов;
+- **Test** — запуск с текущего cue/строки;
+- **Localization** — диалог локализации;
+- status label для сообщений о недопустимых связях.
+
+`Zoom`, `Search`, `Save`, `Errors`, `Settings` в graph-toolbar не дублируются:
+они доступны в основной панели редактора. `Split`-режим не реализован.
+
+### 7.3. Настройки `GraphEdit` (фактическая реализация)
 
 ```gdscript
 graph_edit.show_grid = true
-graph_edit.snap_distance = 20
+graph_edit.set_show_arrange_button(false)
+graph_edit.snapping_enabled = true
+graph_edit.snapping_distance = 20
 graph_edit.panning_scheme = GraphEdit.SCROLL_ZOOMS
 graph_edit.zoom_min = 0.25
 graph_edit.zoom_max = 2.0
@@ -794,6 +796,9 @@ graph_edit.connection_lines_curvature = 0.5
 graph_edit.connection_lines_thickness = 2.0
 graph_edit.connection_lines_antialiased = true
 ```
+
+Встроенная arrange-кнопка `GraphEdit` скрыта, потому что она раскладывает
+только выбранные узлы. Вместо неё используется **Arrange all nodes**.
 
 ### 7.4. Внешний вид узлов
 
@@ -816,65 +821,73 @@ graph_edit.connection_lines_antialiased = true
 Цвета берём из темы редактора (`EditorInterface.get_editor_theme()`), чтобы
 работали светлая и тёмная темы. Для кастомных цветов — настройка.
 
-### 7.5. Взаимодействие
+> **Фактически:** иконки в узлах сейчас не используются. Заголовок и цвет
+> задаются в `DMGraphNodeView._get_kind_title()` / `_get_kind_color()`.
+> Тело узла — это строки с портами; для реплик/ответов с inline-goto
+> дополнительно показывается `→ target` / `↩ target`.
 
-- **Добавление**: правый клик по пустому месту → `Add node`; или `+ Add` в
-  toolbar; или `Tab` на выбранном узле.
-- **Соединение**: протянуть от выходного порта к входному. `GraphEdit` сам
-  вызывает `connection_request`; мы валидируем и применяем патч.
-- **Разрыв**: правый клик по связи → `Disconnect`; или `right_disconnects`.
+### 7.5. Взаимодействие (фактическая реализация)
+
+- **Добавление**: правый клик по пустому месту → контекстное меню; или
+  **Add** в toolbar. Добавляются Dialogue, Response, Cue, Jump, Mutation,
+  Comment.
+- **Соединение**: протянуть от выходного порта к входному. Поддерживаются
+  `cue`, `END`/`END!` и любой top-level узел (для него автоматически
+  создаётся `cue`). Branch-порты и вложенные узлы не соединяются.
+- **Разрыв**: правый клик по связи. Работает для `JUMP`, `RETURN` и
+  основного `FLOW`-продолжения. Для branch/body-связей показывается
+  сообщение.
 - **Выбор**: клик, `Shift`+клик, рамка (встроенная в `GraphEdit`).
 - **Перемещение**: drag; позиция сохраняется в sidecar.
-- **Копирование/вставка**: `Ctrl+C` / `Ctrl+V`; внутри — текст блока.
-- **Дублирование**: `Ctrl+D`.
-- **Удаление**: `Delete`; с подтверждением, если есть дочерние узлы.
+- **Удаление**: `Delete`; удаляется выбранный узел/блок без отдельного
+  подтверждения.
 - **Undo/Redo**: `Ctrl+Z` / `Ctrl+Y` через `EditorUndoRedoManager`.
-- **Контекстное меню**: `Test from here`, `Go to cue`, `Find references`,
-  `Convert to text`, `Add comment`, `Collapse`.
-- **Поиск**: `Ctrl+F`; подсветка найденных узлов, переход по `Enter`.
-- **Zoom**: `Ctrl+wheel`, `+`/`-`, `Fit`.
+- **Контекстное меню**: Add dialogue/response/cue/jump/mutation/comment,
+  Delete selected, а для Condition/Match/Random — Add elif/else,
+  Add when/else, Add random branch.
+- **Zoom**: `Ctrl+wheel`, `+`/`-` (встроенное поведение `GraphEdit`).
 - **Pan**: средняя кнопка мыши / `Space`+drag.
-- **Auto layout**: кнопка `Auto`; после ручного перемещения позиции фиксируются.
+- **Arrange all nodes**: кнопка в toolbar; раскладывает весь граф.
+- **Копирование/вставка, дублирование, поиск по графу, Outline** —
+  в текущей версии не реализованы.
 
-### 7.6. Инспектор
+### 7.6. Инспектор (фактическая реализация)
 
 Динамическая форма по типу узла. Поля:
 
-- **Dialogue**: Character (ComboBox с автодополнением), Text (TextEdit),
-  Tags (LineEdit), Static ID (LineEdit + кнопка Generate), Translator note
-  (TextEdit), Inline mutations (список), Concurrent lines (список).
-- **Response**: Prompt, Condition (LineEdit + валидация), Static ID, Tags,
-  Character, Goto (ComboBox cue/END).
-- **Condition**: список веток; для каждой — выражение, кнопка добавить/удалить;
-  `else` без выражения.
-- **Match**: выражение, список `when`/`else`.
-- **While**: условие.
-- **Mutation**: выражение, чекбокс «блокирующая» (`$>` vs `$>>`).
-- **Jump**: target (ComboBox cue/END/END!/expression), тип (`=>`/`=><`).
-- **Random**: список веток с весом и условием.
-- **Cue**: имя, кнопка «сделать стартовым».
-- **Import**: путь, алиас, список внешних cue.
-- **Comment**: текст.
+- **Dialogue**: Character (LineEdit), Text (TextEdit), Tags (LineEdit),
+  Static ID (LineEdit), Goto (LineEdit), Jump and return (CheckBox),
+  Translator note (read-only TextEdit), Apply.
+- **Response**: Character, Prompt, Tags, Condition, Goto, Jump and return,
+  Static ID, Translator note (read-only), Apply.
+- **Condition**: существующие кейсы с LineEdit выражения; Remove case для
+  кейсов после первого; Add elif; Add else (если `else` ещё нет); Apply.
+- **Match**: существующие `when`/`else` кейсы; Remove case (если кейсов > 1);
+  Add when; Add else (если `else` ещё нет); Apply.
+- **While**: условие (LineEdit), Apply.
+- **Mutation**: выражение, чекбокс «блокирующая» (`$>` vs `$>>`), Apply.
+- **Jump**: target (LineEdit), Jump and return (CheckBox), Apply.
+- **Random**: ветки с Weight и Condition (LineEdit); Remove branch (если
+  веток > 1); Add branch; Apply.
+- **Cue**: имя, Apply.
+- **Comment**: текст, Apply.
+- **Import/Using**: read-only, доступно удаление узла.
+- **Concurrent/Choices/End**: read-only, доступно удаление (кроме End).
 
-Валидация полей:
+Валидация выполняется компилятором: ошибки подсвечивают узлы и показываются
+в основной панели ошибок. Отдельной per-field валидации в инспекторе нет.
 
-- пустой текст реплики — предупреждение;
-- пустой `cue` — ошибка;
-- дубликат `cue` — ошибка;
-- неизвестный `cue` в переходе — ошибка;
-- дубликат `static_id` — ошибка;
-- пустое условие — ошибка;
-- недопустимые символы в `cue` — ошибка.
+### 7.7. Панели (фактическая реализация)
 
-### 7.7. Панели
-
-- **Errors**: список `DMError` с номером строки и сообщением; клик — выбор узла.
-- **Cues**: список cue; клик — центрирование; кнопка «добавить cue».
-- **Localization**: таблица `static_id | text | character | notes | status`;
-  фильтры `missing`, `duplicate`, `untranslated`; кнопки `Generate IDs`,
-  `Export CSV`, `Export POT`.
-- **Outline**: дерево `cue -> узлы`; клик — переход.
-- **Search results**: список совпадений.
+- **Errors**: основная панель ошибок `main_view`; клик по ошибке
+  устанавливает caret и выбирает соответствующий узел графа.
+- **Cues**: основной `CueList`; клик переходит к cue и выбирает cue-узел.
+- **Localization**: отдельный диалог с таблицей
+  `Static ID | Text | Character | Notes | Status | Preview`;
+  кнопки **Generate IDs**, **Export CSV**, **Refresh**; клик по строке
+  выбирает узел. Фильтров и отдельной кнопки Export POT нет — POT
+  обрабатывается существующей локализацией Godot.
+- **Outline** и **Search results** в графе не реализованы.
 
 ---
 
@@ -889,47 +902,51 @@ graph_edit.connection_lines_antialiased = true
 - `_handles()` / `_edit()` остаются;
 - `_apply_changes()` / `_get_unsaved_status()` / `_save_external_data()` остаются.
 
-Добавить только:
+Фактически добавлено только:
 
-- пункт меню `Dialogue -> Open graph` (опционально);
-- настройку «открывать граф по умолчанию»;
-- обработку `files_moved` / `file_removed` для sidecar (можно в `main_view`).
+- в `_on_file_removed()` — `DMGraphSidecar.remove(file)`;
+- остальная интеграция находится в `main_view.gd` (см. 8.3).
+
+Пункт меню `Dialogue -> Open graph` и настройка «открывать граф по умолчанию»
+не добавлялись.
 
 ### 8.2. Изменения в `main_view.tscn`
 
-Добавить:
+`main_view.tscn` **не менялся**. `GraphView` и кнопка **Graph** создаются
+программно в `main_view.gd`:
 
-- `ViewModeBar` — `HBoxContainer` с кнопками `Text`, `Graph`, `Split`;
-- `GraphView` — инстанс `views/graph_view.tscn`;
-- `GraphInspector` — внутри `GraphView`;
-- `GraphBottomPanel` — `TabContainer` с `Errors`, `Cues`, `Localization`,
-  `Outline`;
-- `GraphToolbar` — внутри `GraphView`.
-
-`Content` (HSplitContainer) можно оставить для текстового режима, а `GraphView`
-показывать поверх/рядом в зависимости от режима.
+- кнопка **Graph** добавляется в существующий `CodePanel/Toolbar`;
+- `views/graph_view.tscn` инстанцируется и добавляется в `CodePanel` перед
+  `ErrorsPanel`;
+- инспектор и toolbar находятся внутри `GraphView`;
+- отдельного `ViewModeBar`, `GraphBottomPanel` и `Outline` нет.
 
 ### 8.3. Изменения в `main_view.gd`
 
-Добавить:
+Фактически добавлены:
 
 ```gdscript
-enum ViewMode { TEXT, GRAPH, SPLIT }
-
-var view_mode: ViewMode = ViewMode.TEXT
-
-@onready var graph_view: DMGraphView = %GraphView
-@onready var view_mode_bar: HBoxContainer = %ViewModeBar
+var graph_view: DMGraphView
+var graph_toggle_button: Button
 ```
 
-В `_ready()`:
+`_setup_graph_view()` создаёт кнопку **Graph**, инстанцирует
+`views/graph_view.tscn`, добавляет его в `CodePanel` и подключает сигналы:
 
 ```gdscript
 graph_view.text_changed.connect(_on_graph_text_changed)
-graph_view.node_selected.connect(_on_graph_node_selected)
 graph_view.test_requested.connect(_on_graph_test_requested)
 graph_view.error_selected.connect(_on_graph_error_selected)
 ```
+
+`_on_graph_toggle_toggled(pressed)`:
+
+- скрывает/показывает `CodeEdit`;
+- скрывает `SearchAndReplace`;
+- загружает документ в граф;
+- вызывает `compile()` для подсветки ошибок.
+
+`node_selected` не подключается; `ViewMode`/`Split` не реализованы.
 
 В `open_file(path)` после загрузки текста:
 
@@ -989,8 +1006,9 @@ graph_view.select_line(line_number)
 В `_on_cache_file_content_changed()`:
 
 ```gdscript
-if not graph_view.is_dirty:
+if is_instance_valid(graph_view) and graph_view.visible:
     graph_view.sync_from_text(new_content)
+    compile()
 ```
 
 В `_on_files_moved()`:
@@ -1007,19 +1025,22 @@ graph_view.remove_sidecar(file)
 
 ### 8.4. Синхронизация буферов
 
-Правила:
+Правила (фактическая реализация):
 
-1. **Текст → граф**: при изменении `code_edit.text` (пользователь печатает)
-   граф перестраивается с debounce 150–250 мс. Курсор и скролл текста не трогаем.
-2. **Граф → текст**: при изменении графа вызываем `apply_graph_text()`, который
-   обновляет буфер и `code_edit.text`, сохраняя курсор/скролл.
-3. **Защита от циклов**: флаг `is_syncing` в `graph_view` и `_is_applying_graph_text`
-   в `main_view`. Пока флаг установлен, встречные сигналы игнорируются.
+1. **Текст → граф**: при изменении `code_edit.text` запускается существующий
+   `ParseTimer` (1 секунда). В `_on_parse_timer_timeout()` граф сначала
+   синхронизируется, затем вызывается `compile()`. Курсор и скролл текста
+   не трогаются.
+2. **Граф → текст**: при изменении графа вызывается `apply_graph_text()`,
+   который обновляет буфер и `code_edit.text`, сохраняя курсор/скролл.
+3. **Защита от циклов**: используется флаг `is_syncing` в `graph_view`.
+   Пока он установлен, встречные `sync_from_text()` игнорируются.
 4. **Dirty state**: граф не хранит своё «грязное» состояние отдельно; источник
-   правды — `open_buffers[path].text != pristine_text`. Это уже работает в
+   правды — `open_buffers[path].text != pristine_text`. Это работает в
    `count_unsaved_files()` и `_get_unsaved_status()`.
-5. **Внешние изменения**: если файл изменился на диске и буфер не грязный,
-   обновляем и текст, и граф. Если грязный — показываем предупреждение.
+5. **Внешние изменения**: `_on_cache_file_content_changed()` обновляет
+   `code_edit.text` и граф, если буфер не грязный, и вызывает `compile()`.
+   Отдельного диалога-предупреждения при грязном буфере нет.
 
 ### 8.5. Сохранение
 
@@ -1028,48 +1049,46 @@ graph_view.remove_sidecar(file)
 
 - `DMCache.mark_files_for_reimport([path])`;
 - `EditorInterface.get_resource_filesystem().scan()`;
-- sidecar сохраняется отдельно (если включён).
+- sidecar сохраняется отдельно при перемещении узла (`_on_end_node_move()`)
+  и при **Arrange all nodes**; при простом открытии файла sidecar не создаётся.
 
 ### 8.6. Тестовый запуск
 
 `main_view.run_test_scene(from_key)` уже умеет запускать с cue или номера строки.
 
-В графе:
+В графе кнопка **Test**:
 
-- `Test from here` для `CUE` → `run_test_scene(cue_name)`;
+- для `CUE` → `run_test_scene(cue_name)`;
 - для остальных узлов → `run_test_scene(str(source_line))`;
-- для `JUMP` → `run_test_scene(target)`, если target — cue.
+- для `END`-узлов (`source_start < 0`) — ничего не делает.
 
 ### 8.7. Поиск и переходы
 
-- `DMPlugin.show_find_in_dialogue()` уже открывает файл и выделяет текст.
-  Граф должен обработать `go_to_line_number()` и выбрать узел, содержащий
-  эту строку.
+- `DMPlugin.show_find_in_dialogue()` открывает файл и выделяет текст.
+  `go_to_line_number()` выбирает узел, содержащий эту строку.
 - `go_to_cue()` выбирает cue-узел и центрирует его.
-- `Find references` для cue: найти все `JUMP`-узлы с этой целью.
+- Клик по ошибке в основной панели ошибок также выбирает узел графа.
+- `Find references` для cue в текущей версии не реализован.
 
 ### 8.8. Undo/Redo
 
-Используем `EditorUndoRedoManager`:
+Используется `EditorUndoRedoManager`:
 
 ```gdscript
 var undo_redo: EditorUndoRedoManager = EditorInterface.get_editor_undo_redo()
-undo_redo.create_action("Add dialogue node")
-undo_redo.add_do_method(self, "_apply_patch", patch)
-undo_redo.add_undo_method(self, "_revert_patch", patch)
+undo_redo.create_action(description)
+undo_redo.add_do_method(self, "_set_buffer_text", current_file_path, new_text)
+undo_redo.add_undo_method(self, "_set_buffer_text", current_file_path, old_text)
 undo_redo.commit_action()
 ```
 
-Для графовых операций патч содержит `start_line`, `end_line`, `replacement`.
-Undo применяет обратный патч. Для перемещения узлов — сохраняем старую и новую
-позиции.
+Фактически хранится не патч, а полный старый и новый текст буфера.
+`_set_buffer_text()` обновляет `open_buffers`, `code_edit.text`, запускает
+перекомпиляцию и синхронизирует граф.
 
-Не смешиваем undo-стек текстового редактора и графа: все изменения графа идут
-через `EditorUndoRedoManager`, а текстовый редактор продолжает использовать свой
-встроенный undo. Это может привести к двум стекам; документируем поведение.
-Альтернатива — все изменения (и текстовые, и графовые) проводить через
-`EditorUndoRedoManager`, но это большой рефакторинг. Для MVP достаточно
-раздельных стеков с предупреждением в документации.
+Undo-стек текстового редактора и графа раздельный: графовые изменения идут
+через `EditorUndoRedoManager`, текстовый редактор использует свой встроенный
+undo. Это осознанное ограничение текущей версии.
 
 ---
 
@@ -1079,32 +1098,32 @@ Undo применяет обратный патч. Для перемещения
 
 | Возможность | Представление в графе | Редактирование | Валидация | Runtime |
 |---|---|---|---|---|
-| Реплики | `DIALOGUE` | текст, персонаж, теги, ID, заметка | пустой текст, дубликат ID | без изменений |
-| Ответы | `CHOICES` + `RESPONSE` | prompt, условие, переход, ID, теги | пустой prompt, неизвестный cue | без изменений |
-| Условия `if/elif/else` | `CONDITION` | ветки, выражения | пустое условие, недостижимая ветка | без изменений |
-| `match/when/else` | `MATCH` | выражение, кейсы | пустой кейс, нет `else` (предупреждение) | без изменений |
-| `while` | `WHILE` | условие, тело | цикл без выхода (предупреждение) | без изменений |
-| Мутации `$>`, `$>>`, `do`, `set` | `MUTATION` | выражение, блокирующая | пустое выражение | без изменений |
-| Случайные строки `%` | `RANDOM` | ветки, вес, условие | вес <= 0, пустая ветка | без изменений |
-| `cue` | `CUE` | имя, стартовый cue | пустое имя, дубликат, недопустимые символы | без изменений |
-| `=>` / `=><` | `JUMP` | цель, тип | неизвестный cue, динамический переход | без изменений |
-| `=> END` / `=> END!` | `JUMP` | тип | — | без изменений |
-| Импорты | `IMPORT` + внешние cue | путь, алиас | циклический импорт, отсутствующий файл | без изменений |
-| `using` | `USING` | имя состояния | неизвестный autoload | без изменений |
-| Теги `[#tag]` | поле `Tags` | список | — | без изменений |
-| Одновременные реплики `\|` | `CONCURRENT` | список | нет основной реплики | без изменений |
+| Реплики | `DIALOGUE` | текст, персонаж, теги, ID, goto, jump-and-return; заметка read-only | ошибки компилятора | без изменений |
+| Ответы | `CHOICES` + `RESPONSE` | prompt, персонаж, теги, условие, goto, jump-and-return, ID | ошибки компилятора | без изменений |
+| Условия `if/elif/else` | `CONDITION` | выражения существующих кейсов; add/remove кейсов | ошибки компилятора | без изменений |
+| `match/when/else` | `MATCH` | выражения `when`; add/remove кейсов | ошибки компилятора | без изменений |
+| `while` | `WHILE` | условие | ошибки компилятора | без изменений |
+| Мутации `$>`, `$>>`, `do`, `set` | `MUTATION` | выражение, блокирующая | ошибки компилятора | без изменений |
+| Случайные строки `%` | `RANDOM` | вес и условие веток; add/remove веток | ошибки компилятора | без изменений |
+| `cue` | `CUE` | имя | ошибки компилятора | без изменений |
+| `=>` / `=><` | `JUMP` | цель, тип | ошибки компилятора | без изменений |
+| `=> END` / `=> END!` | `JUMP` | read-only | — | без изменений |
+| Импорты | `IMPORT` + внешние cue | read-only, удаление узла | ошибки компилятора | без изменений |
+| `using` | `USING` | read-only, удаление узла | ошибки компилятора | без изменений |
+| Теги `[#tag]` | поле `Tags` | список в Dialogue/Response | — | без изменений |
+| Одновременные реплики `\|` | `CONCURRENT` | read-only, удаление узла | ошибки компилятора | без изменений |
 | Inline BBCode | поле `Text` | текст | — | без изменений |
-| Inline-мутации | поле `Inline mutations` | список | — | без изменений |
-| Статические ID `[ID:...]` | поле `Static ID` | текст + Generate | дубликат, отсутствует (настройка) | без изменений |
-| Заметки `##` | поле `Translator note` | текст | — | без изменений |
-| Имена персонажей | ComboBox | выбор/добавление | — | без изменений |
-| Выражения в тексте `{{...}}` | поле `Text` | текст | ошибки парсера | без изменений |
-| Динамические переходы `=> {{...}}` | `JUMP` | выражение | предупреждение | без изменений |
-| Dialogue processor | — | — | предупреждение о возможном несоответствии | без изменений |
+| Inline-мутации | поле `Text` | текст (отдельного списка нет) | ошибки компилятора | без изменений |
+| Статические ID `[ID:...]` | поле `Static ID` | текст; Generate IDs в Localization | дубликат/отсутствие — в панели | без изменений |
+| Заметки `##` | поле `Translator note` | read-only; редактируются в тексте | — | без изменений |
+| Имена персонажей | LineEdit | текст (без ComboBox/autocomplete) | — | без изменений |
+| Выражения в тексте `{{...}}` | поле `Text` | текст | ошибки компилятора | без изменений |
+| Динамические переходы `=> {{...}}` | `JUMP` | target как текст | ошибки компилятора | без изменений |
+| Dialogue processor | — | — | не обрабатывается отдельно | без изменений |
 | Тестовая сцена | кнопка `Test` | — | — | без изменений |
-| Поиск | панель поиска | — | — | без изменений |
-| Ошибки | панель ошибок | — | — | без изменений |
-| POT/CSV | панель локализации | — | — | без изменений |
+| Поиск | основная панель поиска | — | — | без изменений |
+| Ошибки | основная панель + подсветка узлов | — | — | без изменений |
+| POT/CSV | Localization dialog | Generate IDs, Export CSV | — | без изменений |
 | C# | — | — | — | без изменений |
 
 ### 9.2. Что важно не сломать
@@ -1135,53 +1154,48 @@ Undo применяет обратный патч. Для перемещения
   `MISSING_TRANSLATIONS_ARE_ERRORS`,
   `INCLUDE_CHARACTERS_IN_TRANSLATABLE_STRINGS_LIST`.
 
-### 10.2. Что добавляет граф
+### 10.2. Что добавляет граф (фактическая реализация)
 
 - Поле `Static ID` в инспекторе реплики/ответа.
-- Кнопка `Generate ID` для выбранного узла (использует
-  `DMTranslationUtilities.generate_static_line_ids_for_text()` на уровне файла
-  или генерирует ключ по тем же правилам).
-- Кнопка `Generate all IDs` для файла/проекта.
-- Панель `Localization`:
-  - таблица строк: `static_id`, `text`, `character`, `notes`, `status`;
-  - фильтры `missing`, `duplicate`, `untranslated`;
+- Диалог **Localization**:
+  - таблица строк: `Static ID`, `Text`, `Character`, `Notes`, `Status`,
+    `Preview`;
+  - статус: `OK`, `Missing ID`, `Duplicate ID`;
+  - `Preview` через `TranslationServer.translate(static_id)`; если перевод
+    не загружен — `(not translated)`;
   - переход к узлу по клику;
-  - предпросмотр перевода `tr(static_id)` для текущей локали редактора.
-- Подсветка узлов:
-  - без ID — жёлтая рамка (если настройка требует ID);
-  - дубликат ID — красная рамка;
-  - перевод отсутствует — серая иконка.
-- Кнопки `Export CSV` и `Export POT` (переиспользуют существующие диалоги).
+  - кнопка **Generate IDs** — вызывает
+    `DMTranslationUtilities.generate_static_line_ids_for_text()` для текущего
+    текста файла;
+  - кнопка **Export CSV** — открывает существующий CSV-диалог аддона;
+  - кнопка **Refresh**.
+- Подсветка узлов: только ошибки компилятора (красный `modulate`).
+  Отдельной жёлтой/красной/серой подсветки по статусу ID нет — статус
+  показывается в таблице локализации.
+- Отдельной кнопки **Export POT** нет: POT обрабатывается существующей
+  локализацией Godot, а `.dialogue`-файлы уже добавляются в
+  `translations_pot_files` плагином.
 
-### 10.3. Правила сохранения
+### 10.3. Правила сохранения (фактическая реализация)
 
-- При изменении текста реплики **не удалять** `[ID:...]` и `##`-заметку.
-- При изменении текста с существующим ID предлагать оставить ID (по умолчанию)
-  или сгенерировать новый.
-- При удалении узла с ID — предупреждать, что перевод осиротеет.
-- При дублировании узла с ID — автоматически генерировать новый ID или
-  предупреждать о дубликате.
-- При вставке узла из другого файла — проверять конфликт ID через
-  `DMCache.known_static_ids`.
+- При изменении текста реплики `[ID:...]` сохраняется: сериализатор берёт
+  `static_id` из свойств узла и записывает его обратно.
+- `##`-заметка находится на строке выше и не затрагивается при правке
+  реплики/ответа.
+- При изменении текста с существующим ID диалог не предлагается; ID
+  сохраняется, пока пользователь не изменит поле `Static ID`.
+- При удалении узла с ID отдельного предупреждения нет.
+- Дублирование узлов и вставка из другого файла в текущей версии не
+  реализованы, поэтому проверка конфликтов ID при этих операциях не
+  выполняется.
 
 ### 10.4. Локализация самого редактора
 
-Строки UI графа добавляем в `addons/dialogue_manager/l10n/en.po` и, по
-возможности, в `es.po`, `uk.po`, `zh.po`, `zh_TW.po`. Используем
-`DMConstants.translate(&"graph....")`.
-
-Пример ключей:
-
-```
-graph.view.text = Text
-graph.view.graph = Graph
-graph.view.split = Split
-graph.add_node = Add node
-graph.auto_layout = Auto layout
-graph.test_from_here = Test from here
-graph.localization.title = Localization
-graph.errors.title = Errors
-```
+Строки UI графа пока **не добавлены** в `l10n/*.po`; подписи кнопок и
+инспектора сейчас английские и заданы прямо в `graph_view.gd` /
+`dialogue_graph_node_view.gd`. Для полноценной локализации редактора нужно
+вынести их в `DMConstants.translate(&"graph....")` и добавить ключи в
+`en.po`, `es.po`, `uk.po`, `zh.po`, `zh_TW.po`.
 
 ---
 
@@ -1192,47 +1206,58 @@ graph.errors.title = Errors
 `DMCompilerResult.errors` — массив `DMError` с `line_number`, `column_number`,
 `error`. Маппим `line_number` на узел:
 
+Фактическая реализация:
+
 ```gdscript
 func set_errors(errors: Array[DMError]) -> void:
-    for node: DMGraphNode in document.nodes.values():
-        node.properties["errors"] = []
+    last_errors = errors
+    if document != null:
+        document.errors = errors
+    _apply_errors()
 
-    for error: DMError in errors:
-        var node: DMGraphNode = find_node_for_line(error.line_number)
-        if node != null:
-            node.properties["errors"].append(error)
-            update_node_badge(node)
+func _apply_errors() -> void:
+    for node_id: String in node_views:
+        var view: DMGraphNodeView = node_views[node_id]
+        var graph_node: DMGraphNode = document.get_node(node_id)
+        var has_error: bool = false
+        for error: DMError in last_errors:
+            var source_line: int = error.line_number - 1
+            if graph_node.source_start <= source_line and source_line <= graph_node.source_end:
+                has_error = true
+                break
+        view.set_error_state(has_error)
 ```
 
 Визуально:
 
-- красная рамка узла;
-- иконка `Error` в заголовке;
-- tooltip с `DMConstants.get_error_message(error.error)`;
-- клик по ошибке в панели — выбор узла и фокус на проблемном поле.
+- узел с ошибкой получает красный `modulate`;
+- tooltip `Has errors`;
+- клик по ошибке в основной панели ошибок выбирает узел графа;
+- отдельной иконки ошибки и фокуса на конкретном поле нет.
 
 ### 11.2. Графовые предупреждения
 
-Дополнительно к компилятору:
+В текущей версии отображаются **только ошибки компилятора**. Перечисленные
+ниже проверки — план на будущее, отдельного graph-validator нет:
 
-- **Недостижимый узел**: нет входящих `FLOW`/`BRANCH`/`JUMP`, и это не `CUE`.
-- **Пустая ветка**: у `CONDITION`/`MATCH`/`RANDOM`/`RESPONSE` нет дочерних строк.
-- **Осиротевший cue**: нет входящих переходов и это не `first_cue`.
-- **Цикл без выхода**: цикл в графе, не являющийся `WHILE`.
-- **Динамический переход**: `next_id_expression` не проверяется компилятором.
-- **Дубликат ID**: уже есть в компиляторе, но показываем и в графе.
-- **Отсутствующий ID**: если `MISSING_TRANSLATIONS_ARE_ERRORS`.
-- **Импорт без использования**: `import`, на cue которого нет переходов.
-- **Одновременная реплика без основной**: компилятор уже ловит.
-- **Слишком большой граф**: > 300 узлов — предупреждение о производительности.
+- недостижимый узел;
+- пустая ветка;
+- осиротевший cue;
+- цикл без выхода;
+- динамический переход;
+- импорт без использования;
+- слишком большой граф.
+
+Дубликаты/отсутствие static ID видны в панели **Localization** как
+`Duplicate ID` / `Missing ID`.
 
 ### 11.3. Панель ошибок
 
-- Группировка по файлу.
-- Фильтры `Errors` / `Warnings`.
-- Клик — переход к узлу.
-- Кнопка `Recompile`.
-- Счётчик в toolbar.
+Используется существующая панель ошибок `main_view`:
+
+- список `DMError` с номером строки и сообщением;
+- клик по ошибке ставит caret в текстовом редакторе и выбирает узел графа;
+- отдельных фильтров, кнопки `Recompile` и счётчика в graph-toolbar нет.
 
 ---
 
@@ -1247,89 +1272,109 @@ func set_errors(errors: Array[DMError]) -> void:
 | 500 строк | ~300 | < 400 мс | < 200 мс |
 | 1000 строк | ~600 | < 1 с | < 500 мс |
 
-### 12.2. Меры
+### 12.2. Меры (фактическая реализация)
 
-- **Debounce** 150–250 мс для текстовых изменений.
-- **Инкрементальное обновление**: если изменился только текст одного узла,
-  не перестраивать весь граф; обновить `properties` и перерисовать узел.
-- **Кэш компиляции**: хранить `DMCompilerResult` и `text_hash`; если хэш не
-  изменился, не компилировать.
-- **Compact mode**: последовательные реплики можно схлопывать в один узел
-  «Sequence» с раскрытием. Это уменьшает количество `GraphNode`.
-- **Focus mode**: показывать только подграф выбранного cue; остальное скрыто.
-- **Отключение minimap** при > 500 узлах.
-- **`set_process(false)`** когда вкладка не видима.
-- **Ленивая загрузка sidecar**: читать только при открытии файла.
-- **Ограничение истории undo**: не хранить полные копии текста для каждого
-  изменения; хранить патчи.
+- **Debounce** — существующий `ParseTimer` (1 секунда) для текстовых
+  изменений; граф синхронизируется в `_on_parse_timer_timeout()`.
+- **Полная перестройка графа** при каждом изменении текста. Инкрементального
+  обновления и кэша `text_hash` пока нет.
+- **Собственный layered layout** вместо `GraphEdit.arrange_nodes()`.
+- **Sidecar** читается при открытии/синхронизации и сохраняется при
+  перемещении узла или **Arrange all nodes**.
+- **`is_building`** предотвращает сохранение sidecar во время авто-раскладки.
+- **`is_syncing`** предотвращает рекурсивную синхронизацию текста и графа.
+- **Compact mode, Focus mode, отключение minimap, ленивая загрузка,
+  инкрементальный undo** — не реализованы.
 
 ---
 
 ## 13. Тестирование
 
-### 13.1. Unit-тесты
+### 13.1. Unit-тесты (фактическая реализация)
 
-Добавить в `tests/`:
+Добавлены в `tests/`:
 
 - `test_graph_builder.gd`:
-  - построение узлов для каждого типа строки;
-  - корректные `next_id`/`responses`/`siblings`;
-  - группировка `if/elif/else`, `match`, `random`, `responses`;
-  - `cue` и `first_cue`;
-  - импорты и внешние cue;
-  - одновременные реплики;
-  - source map.
+  - `builds basic dialogue`;
+  - `builds responses`;
+  - `builds conditions`;
+  - `builds match`;
+  - `builds while`;
+  - `builds random`;
+  - `builds concurrent lines`;
+  - `builds imports`.
 - `test_graph_serializer.gd`:
-  - каждая операция даёт ожидаемый текст;
-  - отступы;
-  - сохранение комментариев и ID;
-  - удаление/вставка/перемещение.
-- `test_graph_roundtrip.gd`:
-  - `text -> graph -> text` для всех `.dialogue` в `tests/`;
-  - идемпотентность;
-  - отсутствие новых ошибок компиляции.
-- `test_graph_validation.gd`:
-  - недостижимые узлы;
-  - пустые ветки;
-  - дубликаты ID;
-  - неизвестные cue.
+  - `sets dialogue properties`;
+  - `sets response properties`;
+  - `renames cue and updates jumps`;
+  - `sets jump target`;
+  - `adds dialogue after`;
+  - `adds response after`;
+  - `deletes node`;
+  - `sets condition cases`;
+  - `sets match cases`;
+  - `sets while expression`;
+  - `sets random branches`;
+  - `clears inline goto`;
+  - `adds cue before`;
+  - `adds condition case`;
+  - `removes condition case`;
+  - `adds match case`;
+  - `removes match case`;
+  - `adds random branch`;
+  - `removes random branch`;
+  - `round trip without changes`.
+
+Отдельных `test_graph_roundtrip.gd` и `test_graph_validation.gd` нет:
+round-trip проверяется внутри serializer-тестов, а graph-validator не
+реализован.
 
 ### 13.2. Интеграционные тесты
 
-- Открыть `.dialogue`, переключиться в Graph, изменить текст, сохранить,
-  проверить импорт и runtime.
-- Undo/Redo для добавления/удаления/перемещения.
-- Внешнее изменение файла.
-- Перемещение/удаление файла и sidecar.
-- Генерация ID и экспорт CSV/POT.
-- Тестовый запуск с узла.
-- Поиск и переход к ошибке.
+Автоматизированных интеграционных тестов нет. Проверялось smoke-скриптами:
 
-### 13.3. Ручной тест-матрица
+- открытие `.dialogue` и построение графа;
+- построение инспектора для всех типов узлов;
+- соединение с top-level узлом и обратное соединение;
+- соединение из ответа;
+- отсоединение;
+- добавление/удаление condition/match/random-кейсов;
+- панель локализации и preview;
+- запуск editor без script errors/warnings.
 
-- Godot 4.6 и 4.7.
-- Windows / Linux / macOS.
-- Светлая и тёмная тема.
-- GDScript-проект и C#-проект.
-- Высокий DPI.
-- Файлы: `tests/main.dialogue`, `tests/snippets.dialogue`, примеры из docs.
-- Большой файл (500+ строк).
+### 13.3. Ручная тест-матрица
+
+Фактически проверено:
+
+- Godot **4.7.2**, Windows, headless editor;
+- `tests/main.dialogue`, `tests/snippets.dialogue`, `test.dialogue`;
+- сложный диалог с condition/match/while/random/concurrent/import.
+
+Не проверялось в этой сессии:
+
+- Godot 4.6;
+- Linux/macOS;
+- светлая/тёмная тема в интерактивном режиме;
+- C#-проект;
+- высокий DPI;
+- большой файл 500+ строк.
 
 ### 13.4. Критерии приёмки
 
-- [ ] Граф открывается для любого `.dialogue` без ошибок.
-- [ ] Все типы строк отображаются корректными узлами.
-- [ ] Изменения в графе сохраняются в текст и компилируются без новых ошибок.
-- [ ] `text -> graph -> text` не меняет файл, если граф не редактировали.
-- [ ] Условия, `match`, `while`, `random`, ответы, переходы, импорты,
+- [x] Граф открывается для `.dialogue` без script errors.
+- [x] Все основные типы строк отображаются узлами.
+- [x] Изменения в графе сохраняются в текст и компилируются.
+- [x] `text -> graph -> text` не меняет файл, если граф не редактировали
+      (проверено на простом диалоге).
+- [x] Условия, `match`, `while`, `random`, ответы, переходы, импорты,
       одновременные реплики поддерживаются.
-- [ ] Статические ID и заметки сохраняются.
-- [ ] POT/CSV экспорт работает.
-- [ ] Тестовый запуск работает с узла.
-- [ ] Undo/Redo работает.
-- [ ] Ошибки компилятора подсвечиваются на узлах.
-- [ ] Граф не ломает существующий текстовый редактор.
-- [ ] Производительность в пределах целевых показателей.
+- [x] Статические ID и заметки сохраняются.
+- [x] CSV-экспорт доступен; POT — через существующую локализацию Godot.
+- [x] Тестовый запуск работает с узла.
+- [x] Undo/Redo работает через `EditorUndoRedoManager`.
+- [x] Ошибки компилятора подсвечиваются на узлах.
+- [x] Граф не ломает существующий текстовый редактор.
+- [ ] Производительность на больших файлах не измерялась.
 
 ---
 
@@ -1345,26 +1390,24 @@ func set_errors(errors: Array[DMError]) -> void:
 
 **Результат:** структура папок, настройки, тестовый корпус.
 
-### Этап 1. Модель и source map (2–3 дня)
+### Этап 1. Модель и source ranges (2–3 дня)
 
 1. Создать `graph/dialogue_graph_document.gd`, `dialogue_graph_node.gd`,
-   `dialogue_graph_edge.gd`, `dialogue_graph_patch.gd`.
-2. Добавить editor-only поля в `DMCompiledLine` и `DMCompilerResult`.
-3. Добавить `collect_source_map` в `DMCompilation`.
-4. Заполнить `source_line`, `source_end_line`, `raw_text`, `parent_id`.
-5. Экспортировать `tree`, `imports`, `comments`.
-6. Написать `DMGraphBuilder` (без UI).
-7. Unit-тесты на построение.
+   `dialogue_graph_edge.gd`, `dialogue_graph_sidecar.gd`.
+2. Добавить `next_id_after` в `to_data()` для response/dialogue/random.
+3. Восстанавливать source line из line ID и сырых строк.
+4. Написать `DMGraphBuilder` (без UI).
+5. Unit-тесты на построение.
 
-**Результат:** текст → `DMGraphDocument` с узлами, рёбрами и source map.
+**Результат:** текст → `DMGraphDocument` с узлами, рёбрами и source ranges.
 
 ### Этап 2. Read-only граф (2–3 дня)
 
 1. Создать `views/graph_view.tscn` и `graph_view.gd`.
-2. Добавить `GraphEdit` и базовые `GraphNode`-сцены.
+2. Добавить `GraphEdit` и `DMGraphNodeView`.
 3. Отрисовать узлы и связи.
-4. Добавить auto-layout (`GraphEdit.arrange_nodes()`).
-5. Добавить переключатель Text/Graph в `main_view`.
+4. Добавить собственный layered layout (`_arrange_graph`).
+5. Добавить кнопку **Graph** в `main_view`.
 6. Синхронизировать открытие файла и выбор узла.
 7. Sidecar: чтение/запись позиций.
 
@@ -1376,7 +1419,7 @@ func set_errors(errors: Array[DMError]) -> void:
 2. Изменение текста/персонажа/тегов/ID.
 3. Добавление/удаление реплик и ответов.
 4. Переходы на cue.
-5. `DMGraphSerializer` с патчами.
+5. `DMGraphSerializer` с точечными текстовыми операциями.
 6. Синхронизация граф → текст → компиляция.
 7. Undo/Redo.
 8. Тесты round-trip.
@@ -1409,20 +1452,28 @@ func set_errors(errors: Array[DMError]) -> void:
 
 **Результат:** локализация работает из графа.
 
-### Этап 6. Полировка (4–5 дней)
+### Этап 6. Полировка (частично)
 
-1. Copy/Paste/Duplicate.
-2. Multi-select.
-3. Контекстное меню.
-4. Поиск по графу.
-5. Группы/фреймы.
-6. Комментарии-стикеры.
-7. Compact/Focus mode.
-8. Настройки graph-режима.
-9. Темизация.
-10. Локализация UI.
+Реализовано:
 
-**Результат:** удобный повседневный инструмент.
+- [x] Контекстное меню (Add, Delete, Add elif/else, Add when/else,
+      Add random branch).
+- [x] Multi-select средствами `GraphEdit`.
+- [x] Темизация через цвета узлов и портов.
+- [x] **Arrange all nodes**.
+- [x] Панель **Localization**.
+
+Не реализовано:
+
+- [ ] Copy/Paste/Duplicate.
+- [ ] Поиск по графу.
+- [ ] Группы/фреймы.
+- [ ] Комментарии-стикеры.
+- [ ] Compact/Focus mode.
+- [ ] Настройки graph-режима.
+- [ ] Локализация UI графа.
+
+**Результат:** базовый повседневный инструмент; часть полировки — в плане.
 
 ### Этап 7. Тестирование и документация (3–4 дня)
 
@@ -1441,7 +1492,7 @@ func set_errors(errors: Array[DMError]) -> void:
 | Этап | Дни |
 |---|---|
 | 0. Подготовка | 0.5–1 |
-| 1. Модель и source map | 2–3 |
+| 1. Модель и source ranges | 2–3 |
 | 2. Read-only граф | 2–3 |
 | 3. Редактирование ядра | 4–6 |
 | 4. Продвинутые узлы | 5–7 |
@@ -1452,6 +1503,9 @@ func set_errors(errors: Array[DMError]) -> void:
 
 Для одного разработчика — примерно 5–7 недель с учётом ревью и непредвиденных
 задач. MVP (этапы 0–3) — около 2–3 недель.
+
+> Оценки выше — исходные проектные. Фактическая реализация выполнена в рамках
+> текущей сессии; фактический объём и коммиты см. в разделе 21.
 
 ---
 
@@ -1472,30 +1526,29 @@ func set_errors(errors: Array[DMError]) -> void:
 
 ---
 
-## 16. Открытые вопросы
+## 16. Решённые вопросы
 
-Перед началом реализации стоит подтвердить:
+Вопросы из исходного плана закрыты фактической реализацией:
 
-1. **Источник правды.** Оставляем `.dialogue` текстом (рекомендуется) или
-   хотим graph-first с отдельным `.dialoguegraph`?
-2. **Режим интеграции.** Text/Graph/Split в существующей вкладке (рекомендуется)
-   или отдельная вкладка/плагин?
-3. **MVP.** Начинаем с read-only графа и простых реплик/ответов/переходов
-   (рекомендуется) или сразу делаем все синтаксисы?
-4. **Sidecar.** Храним `.dialogue.graph.json` рядом с файлом (рекомендуется) или
-   в `user://` (только локально, не шарится в git)?
-5. **Auto-layout.** Достаточно `GraphEdit.arrange_nodes()` или нужен
-   собственный layered layout?
-6. **Ограничения связей.** Согласны, что произвольные связи запрещены и
-   переходы делаются только на cue (рекомендуется)?
-7. **Локализация.** Нужен ли предпросмотр перевода в графе и панель
-   `Localization` в MVP?
-8. **C#.** Нужно ли что-то отдельное для C#-проектов? (Граф editor-only,
-   скорее всего нет.)
+1. **Источник правды.** `.dialogue` остаётся текстом; graph-first не вводился.
+2. **Режим интеграции.** Text/Graph в существующей вкладке **Dialogue**;
+   `Split` не реализован.
+3. **MVP.** Реализованы и ядро, и продвинутые узлы: condition/match/while/
+   random, ответы, переходы, импорты, concurrent, локализация.
+4. **Sidecar.** Хранится рядом с файлом: `<file>.dialogue.graph.json`.
+5. **Auto-layout.** Используется собственный layered layout; встроенная
+   arrange-кнопка `GraphEdit` скрыта.
+6. **Ограничения связей.** Основные flow-узлы можно соединять с любым
+   top-level узлом через автосоздание `cue`; branch-порты остаются
+   текстовыми ветками.
+7. **Локализация.** Панель **Localization** и preview через
+   `TranslationServer.translate()` реализованы.
+8. **C#.** Отдельной работы не требуется: граф editor-only и работает с
+   текстом.
 
-Если ответы не уточнены, план предполагает рекомендованные варианты:
-text-first, Text/Graph/Split, MVP с этапов 0–3, sidecar рядом с файлом,
-`arrange_nodes()`, запрет произвольных связей, панель локализации в этапе 5.
+Все вопросы закрыты фактической реализацией: text-first, Text/Graph,
+sidecar рядом с файлом, собственный layered layout, соединения через
+автосоздание cue, панель локализации с preview.
 
 ---
 
@@ -1548,10 +1601,16 @@ Nathan: Anyway...
 - `GraphEdit`: `connect_node()`, `disconnect_node()`, `get_connection_list()`,
   `connection_request`, `disconnection_request`, `node_selected`,
   `popup_request`, `delete_nodes_request`, `begin_node_move`, `end_node_move`,
-  `arrange_nodes()`, `set_connection_activity()`, `minimap_enabled`,
-  `snap_distance`, `zoom`, `scroll_offset`.
+  `set_show_arrange_button(false)`, `set_connection_activity()`,
+  `minimap_enabled`, `snapping_enabled`, `snapping_distance`, `zoom`,
+  `scroll_offset`.
 - `GraphNode`: `set_slot()`, `title`, `position_offset`, `size`, `resizable`,
-  `draggable`, `selectable`.
+  `draggable`, `selectable`, `get_input_port_count()`,
+  `get_output_port_count()`.
+- `GraphElement`: используется для фильтрации детей `GraphEdit` при очистке
+  (не удалять внутренний connection layer).
+- `EditorUndoRedoManager`: `create_action()`, `add_do_method()`,
+  `add_undo_method()`, `commit_action()`.
 - `GraphElement`: базовый класс для кастомных элементов.
 - `GraphFrame`: визуальные группы.
 - `EditorUndoRedoManager`: `create_action()`, `add_do_method()`,
@@ -1583,12 +1642,12 @@ Nathan: Anyway...
 
 ---
 
-## 19. Конкретные сигнатуры классов
+## 18. Конкретные сигнатуры классов
 
 Ниже — рабочие сигнатуры, по которым будет писаться код. Все классы editor-only,
 `@tool`, с префиксом `DM`, в стиле аддона.
 
-### 19.1. Модель
+### 18.1. Модель
 
 ```gdscript
 # addons/dialogue_manager/graph/dialogue_graph_node.gd
@@ -1658,6 +1717,8 @@ var text: String = ""
 var nodes: Dictionary = {}          # String -> DMGraphNode
 var edges: Array[DMGraphEdge] = []
 var cues: Dictionary = {}           # cue -> node_id
+var line_nodes: Dictionary = {}     # compiled line id -> node id
+var response_groups: Dictionary = {} # first response id -> choices node id
 var first_cue: String = ""
 var imports: Array[Dictionary] = []
 var using_states: PackedStringArray = []
@@ -1675,7 +1736,7 @@ func find_cue_node(cue: String) -> DMGraphNode
 func to_dict() -> Dictionary
 ```
 
-### 19.2. Построение и сериализация
+### 18.2. Построение и сериализация
 
 ```gdscript
 # addons/dialogue_manager/graph/dialogue_graph_builder.gd
@@ -1683,19 +1744,44 @@ func to_dict() -> Dictionary
 class_name DMGraphBuilder extends RefCounted
 
 static func build(text: String, path: String) -> DMGraphDocument
+static func _extract_imports(lines: PackedStringArray) -> Array[Dictionary]
 static func _build_file_nodes(doc: DMGraphDocument, result: DMCompilerResult) -> void
 static func _build_cue_nodes(doc: DMGraphDocument, result: DMCompilerResult) -> void
+static func _find_cue_line(lines: PackedStringArray, cue: String) -> int
 static func _build_line_nodes(doc: DMGraphDocument, result: DMCompilerResult) -> void
+static func _make_dialogue_node(...) -> DMGraphNode
+static func _make_response_node(...) -> DMGraphNode
+static func _make_choices_node(...) -> DMGraphNode
+static func _make_condition_node(...) -> DMGraphNode
+static func _make_match_node(...) -> DMGraphNode
+static func _find_match_case_line(doc, case, source_start, source_end) -> int
+static func _extract_when_expression(raw_line: String) -> String
+static func _make_while_node(...) -> DMGraphNode
+static func _make_mutation_node(...) -> DMGraphNode
+static func _make_jump_node(...) -> DMGraphNode
+static func _make_random_node(...) -> DMGraphNode
+static func _find_random_branch_lines(doc, source_start, indent) -> Array[int]
+static func _extract_random_condition(raw_line: String) -> String
+static func _make_concurrent_node(...) -> DMGraphNode
 static func _build_edges(doc: DMGraphDocument, result: DMCompilerResult) -> void
-static func _group_conditions(doc: DMGraphDocument, result: DMCompilerResult) -> void
-static func _group_matches(doc: DMGraphDocument, result: DMCompilerResult) -> void
-static func _group_random(doc: DMGraphDocument, result: DMCompilerResult) -> void
-static func _group_responses(doc: DMGraphDocument, result: DMCompilerResult) -> void
+static func _add_end_nodes(doc: DMGraphDocument) -> void
+static func _get_flow_port(node: DMGraphNode) -> int
+static func _get_return_port(node: DMGraphNode) -> int
+static func _add_flow(doc, node, line_id, port = 0) -> void
+static func _add_branch(doc, node, port, line_id) -> void
+static func _add_branch_to_node(doc, node, port, target_node_id) -> void
+static func _add_jump(doc, node, target) -> void
+static func _add_return(doc, node, line_id) -> void
+static func _target_node_id(doc, line_id) -> String
+static func _cue_target_node_id(doc, target) -> String
+static func _add_edge_if_missing(doc, edge) -> void
 static func _source_line_for_id(line_id: String) -> int
-static func _find_block_end(lines: PackedStringArray, start_line: int, indent: int) -> int
+static func _find_block_end(lines, start_line, indent) -> int
 static func _indent_count(line: String) -> int
-static func _stable_key(line: Dictionary, index: int) -> String
-static func _add_edge_if_missing(doc: DMGraphDocument, edge: DMGraphEdge) -> void
+static func _stable_key(line: Dictionary, _index: int) -> String
+static func _extract_goto(raw_line: String) -> String
+static func _extract_condition(raw_line: String) -> String
+static func _extract_mutation(raw_line: String) -> String
 ```
 
 ```gdscript
@@ -1703,22 +1789,44 @@ static func _add_edge_if_missing(doc: DMGraphDocument, edge: DMGraphEdge) -> voi
 @tool
 class_name DMGraphSerializer extends RefCounted
 
-static func set_dialogue_properties(text: String, node: DMGraphNode, properties: Dictionary) -> String
-static func set_response_properties(text: String, node: DMGraphNode, properties: Dictionary) -> String
-static func set_cue_name(text: String, node: DMGraphNode, new_name: String) -> String
-static func set_jump_target(text: String, node: DMGraphNode, target: String, is_snippet: bool) -> String
-static func set_mutation_expression(text: String, node: DMGraphNode, expression: String, is_blocking: bool) -> String
-static func add_dialogue_after(text: String, node: DMGraphNode, character: String, dialogue: String) -> String
-static func add_response_after(text: String, node: DMGraphNode, prompt: String) -> String
-static func add_cue(text: String, cue: String) -> String
-static func delete_node(text: String, node: DMGraphNode) -> String
-static func replace_lines(text: String, start_line: int, end_line: int, replacement: PackedStringArray) -> String
-static func _line_indent(line: String) -> String
-static func _format_dialogue_line(character: String, dialogue: String, tags: PackedStringArray, static_id: String) -> String
-static func _format_response_line(prompt: String, condition: String, goto: String, static_id: String) -> String
+static func set_dialogue_properties(text, node, properties) -> String
+static func set_response_properties(text, node, properties) -> String
+static func set_cue_name(text, node, new_name) -> String
+static func set_jump_target(text, node, target, is_snippet) -> String
+static func set_inline_goto(text, node, target, is_snippet) -> String
+static func clear_inline_goto(text, node) -> String
+static func set_mutation_expression(text, node, expression, is_blocking) -> String
+static func set_comment_text(text, node, comment) -> String
+static func set_condition_cases(text, node, cases) -> String
+static func set_match_cases(text, node, cases) -> String
+static func set_while_expression(text, node, expression) -> String
+static func set_random_branches(text, node, branches) -> String
+static func add_condition_case(text, node, expression, is_else) -> String
+static func remove_condition_case(text, node, case_index) -> String
+static func add_match_case(text, node, expression, is_else) -> String
+static func remove_match_case(text, node, case_index) -> String
+static func add_random_branch(text, node, weight, condition) -> String
+static func remove_random_branch(text, node, branch_index) -> String
+static func add_dialogue_after(text, node, character, dialogue) -> String
+static func add_response_after(text, node, prompt) -> String
+static func add_cue(text, cue) -> String
+static func add_cue_before(text, node, cue) -> String
+static func add_jump_after(text, node, target, is_snippet) -> String
+static func add_mutation_after(text, node, expression, is_blocking) -> String
+static func add_comment_after(text, node, comment) -> String
+static func delete_node(text, node) -> String
+static func replace_lines(text, start_line, end_line, replacement) -> String
+static func insert_lines(text, at, new_lines) -> String
+static func delete_lines(text, start_line, end_line) -> String
+static func _line_indent(line) -> String
+static func _format_dialogue_line(character, dialogue, tags, static_id, goto = "", goto_is_snippet = false) -> String
+static func _format_response_line(prompt, condition, goto, static_id, goto_is_snippet = false, character = "", tags = []) -> String
+static func _format_weight(weight: float) -> String
+static func _clean_expression(expression: String) -> String
+static func _random_branch_content(raw_text: String) -> String
 ```
 
-### 19.3. Sidecar
+### 18.3. Sidecar
 
 ```gdscript
 # addons/dialogue_manager/graph/dialogue_graph_sidecar.gd
@@ -1736,7 +1844,7 @@ static func apply_to_document(document: DMGraphDocument, data: Dictionary) -> vo
 static func collect_from_document(document: DMGraphDocument) -> Dictionary
 ```
 
-### 19.4. View
+### 18.4. View
 
 ```gdscript
 # addons/dialogue_manager/graph/dialogue_graph_node_view.gd
@@ -1749,9 +1857,14 @@ var document: DMGraphDocument
 func setup(node: DMGraphNode, doc: DMGraphDocument) -> void
 func refresh() -> void
 func set_error_state(has_error: bool) -> void
+func get_port_slot_offset() -> int
+func _add_goto_label(node: DMGraphNode) -> void
+func _add_plain_label(text: String) -> void
 func _add_port_row(text: String, has_input: bool, has_output: bool, color: Color) -> HBoxContainer
 func _get_kind_color(kind: DMGraphNode.Kind) -> Color
 func _get_kind_title(kind: DMGraphNode.Kind) -> String
+static func _short(text: String, max_length: int = 80) -> String
+static func safe_name(id: String) -> String
 ```
 
 ```gdscript
@@ -1767,12 +1880,16 @@ signal node_selected(node: DMGraphNode)
 var document: DMGraphDocument
 var is_syncing: bool = false
 var is_dirty: bool = false
+var is_building: bool = false
 var current_path: String = ""
 
 var graph_edit: GraphEdit
 var inspector: VBoxContainer
+var status_label: Label
 var node_views: Dictionary = {}
 var selected_node: DMGraphNode
+var inspector_fields: Dictionary = {}
+var last_errors: Array[DMError] = []
 
 func _ready() -> void
 func load_document(path: String, text: String) -> void
@@ -1780,6 +1897,7 @@ func clear_document() -> void
 func sync_from_text(text: String) -> void
 func rebuild() -> void
 func set_errors(errors: Array[DMError]) -> void
+func _apply_errors() -> void
 func select_node(node_id: String) -> void
 func select_cue(cue: String) -> void
 func select_line(line_number: int) -> void
@@ -1787,21 +1905,43 @@ func move_sidecar(old_path: String, new_path: String) -> void
 func remove_sidecar(path: String) -> void
 func _build_ui() -> void
 func _build_graph() -> void
+func _arrange_graph() -> void
 func _build_inspector() -> void
 func _on_connection_request(from_node: StringName, from_port: int, to_node: StringName, to_port: int) -> void
+func _apply_connection_to_target(from_graph_node, target, cue_to_insert, target_node) -> void
+func _cue_for_node(target_node: DMGraphNode) -> Dictionary
+func _sanitize_cue_name(value: String) -> String
+func _find_node_by_stable_key(doc, stable_key, source_start_hint = -1) -> DMGraphNode
 func _on_disconnection_request(from_node: StringName, from_port: int, to_node: StringName, to_port: int) -> void
 func _on_node_selected(node: Node) -> void
+func _on_node_deselected(node: Node) -> void
 func _on_popup_request(at_position: Vector2) -> void
-func _on_delete_nodes_request(nodes: Array[StringName]) -> void
+func _cases_have_else(node: DMGraphNode) -> bool
+func _on_popup_menu_id_pressed(id: int) -> void
+func _on_delete_selected_pressed() -> void
+func _on_delete_nodes_request(nodes: Array) -> void
 func _on_end_node_move() -> void
 func _on_add_node_pressed(kind: int) -> void
+func _on_add_condition_case_pressed(is_else: bool) -> void
+func _on_remove_condition_case_pressed(index: int) -> void
+func _on_add_match_case_pressed(is_else: bool) -> void
+func _on_remove_match_case_pressed(index: int) -> void
+func _on_add_random_branch_pressed() -> void
+func _on_remove_random_branch_pressed(index: int) -> void
 func _on_apply_inspector_pressed() -> void
+func _on_auto_layout_pressed() -> void
 func _on_test_pressed() -> void
+func _open_localization_panel() -> void
+func _build_localization_rows(tree: Tree) -> void
+func _on_localization_item_selected(tree: Tree) -> void
 func _apply_text(new_text: String, description: String) -> void
 func _save_layout() -> void
+func _parse_tags(text: String) -> PackedStringArray
+func _node_id_from_name(node_name: String) -> String
+func _set_status(message: String) -> void
 ```
 
-### 19.5. Интеграция в `main_view.gd`
+### 18.5. Интеграция в `main_view.gd`
 
 ```gdscript
 var graph_view: DMGraphView
@@ -1818,65 +1958,81 @@ func _set_buffer_text(path: String, text: String) -> void
 
 ---
 
-## 20. Рабочий пошаговый план (чек-лист)
-
-Этот чек-лист — то, по чему идёт реализация. Каждый пункт заканчивается
-рабочим состоянием и коммитом.
+## 19. Рабочий пошаговый план (чек-лист, выполнен)
 
 ### Шаг 1. Каркас графа
 
-- [ ] `graph/dialogue_graph_node.gd`
-- [ ] `graph/dialogue_graph_edge.gd`
-- [ ] `graph/dialogue_graph_document.gd`
-- [ ] `graph/dialogue_graph_sidecar.gd`
-- [ ] Коммит: `Add graph data model`
+- [x] `graph/dialogue_graph_node.gd`
+- [x] `graph/dialogue_graph_edge.gd`
+- [x] `graph/dialogue_graph_document.gd`
+- [x] `graph/dialogue_graph_sidecar.gd`
+- [x] Коммит: `Add graph data model, builder, serializer, and sidecar`
 
 ### Шаг 2. Построение графа
 
-- [ ] `graph/dialogue_graph_builder.gd`
-- [ ] Узлы для `cue`, `dialogue`, `response`, `choices`, `condition`, `match`,
-      `while`, `mutation`, `jump`, `random`, `concurrent`, `import`, `using`.
-- [ ] Рёбра `FLOW`, `BRANCH`, `JUMP`, `RETURN`, `CONCURRENT`.
-- [ ] Source ranges и `stable_key`.
-- [ ] Коммит: `Build graph from compiled dialogue`
+- [x] `graph/dialogue_graph_builder.gd`
+- [x] Узлы для `cue`, `dialogue`, `response`, `choices`, `condition`, `match`,
+      `while`, `mutation`, `jump`, `random`, `concurrent`, `comment`, `import`,
+      `using`, `end`.
+- [x] Рёбра `FLOW`, `BRANCH`, `JUMP`, `RETURN`, `CONCURRENT`.
+- [x] Source ranges, `stable_key`, `block_end` для кейсов/веток.
+- [x] Коммит: `Build graph from compiled dialogue`
 
 ### Шаг 3. Сериализация
 
-- [ ] `graph/dialogue_graph_serializer.gd`
-- [ ] Изменение реплик, ответов, cue, переходов, мутаций.
-- [ ] Добавление/удаление узлов.
-- [ ] `replace_lines()` и сохранение отступов.
-- [ ] Коммит: `Serialize graph edits back to dialogue text`
+- [x] `graph/dialogue_graph_serializer.gd`
+- [x] Изменение реплик, ответов, cue, переходов, мутаций, комментариев.
+- [x] Добавление/удаление узлов.
+- [x] `replace_lines()`, `insert_lines()`, `delete_lines()`.
+- [x] Редактирование condition/match/while/random.
+- [x] Добавление/удаление condition/match/random-кейсов и веток.
+- [x] `add_cue_before()`, `clear_inline_goto()`.
+- [x] Коммит: `Serialize graph edits back to dialogue text`
 
 ### Шаг 4. View
 
-- [ ] `graph/dialogue_graph_node_view.gd`
-- [ ] `views/graph_view.gd`
-- [ ] `views/graph_view.tscn`
-- [ ] `GraphEdit`, порты, связи, инспектор, toolbar.
-- [ ] Sidecar layout.
-- [ ] Коммит: `Add graph view`
+- [x] `graph/dialogue_graph_node_view.gd`
+- [x] `views/graph_view.gd`
+- [x] `views/graph_view.tscn`
+- [x] `GraphEdit`, порты, связи, инспектор, toolbar.
+- [x] Sidecar layout.
+- [x] Собственный layered layout (`_arrange_graph`).
+- [x] Кнопка **Arrange all nodes**; встроенная arrange-кнопка скрыта.
+- [x] Коммит: `Add graph view`
 
 ### Шаг 5. Интеграция
 
-- [ ] `main_view.gd`: `_setup_graph_view()`, режим Text/Graph.
-- [ ] Синхронизация текста и графа.
-- [ ] `apply_graph_text()` + `EditorUndoRedoManager`.
-- [ ] Ошибки, тест, переходы к cue/строке.
-- [ ] `files_moved` / `file_removed` для sidecar.
-- [ ] Коммит: `Integrate graph view into dialogue editor`
+- [x] `main_view.gd`: `_setup_graph_view()`, режим Text/Graph.
+- [x] Синхронизация текста и графа.
+- [x] `apply_graph_text()` + `EditorUndoRedoManager`.
+- [x] Ошибки, тест, переходы к cue/строке.
+- [x] `files_moved` / `file_removed` для sidecar.
+- [x] Коммит: `Integrate graph view into dialogue editor`
 
 ### Шаг 6. Проверка и документация
 
-- [ ] `tests/test_graph_builder.gd`
-- [ ] `tests/test_graph_serializer.gd`
-- [ ] `tests/test_graph_roundtrip.gd`
-- [ ] Обновить `VISUAL_NODE_EDITOR_PLAN.md` фактическим статусом.
-- [ ] Коммит: `Add graph editor tests and docs`
+- [x] `tests/test_graph_builder.gd`
+- [x] `tests/test_graph_serializer.gd`
+- [x] Round-trip-тест внутри serializer-тестов.
+- [x] Обновить `VISUAL_NODE_EDITOR_PLAN.md` фактическим статусом.
+- [x] Коммит: `Add graph editor tests and docs`
+
+### Шаг 7. Дополнительно реализовано
+
+- [x] Соединение с любым top-level узлом через автосоздание `cue`.
+- [x] Отсоединение `JUMP`/`RETURN`/основного `FLOW`.
+- [x] Редактирование inline-goto (`=>` / `=><`) в инспекторе.
+- [x] Панель **Localization** с Generate IDs, Export CSV, Refresh, Preview.
+- [x] Контекстное меню: Add elif/else, Add when/else, Add random branch.
+- [x] Улучшенное сопоставление позиций sidecar.
+- [x] Коммиты: `Implement advanced graph editing...`,
+      `Add and remove condition, match, and random branches...`,
+      `Add case and branch actions to the graph context menu`,
+      `Replace the built-in arrange action with arrange all nodes`.
 
 ---
 
-## 21. Статус реализации
+## 20. Статус реализации
 
 Реализовано в текущей версии:
 
@@ -1908,8 +2064,12 @@ func _set_buffer_text(path: String, text: String) -> void
 - [x] Соединение с любым top-level узлом через автоматическое создание cue.
 - [x] Отсоединение переходов, возвратов и основного продолжения.
 - [x] Собственный layered layout без предупреждений о циклах.
+- [x] Кнопка **Arrange all nodes**; встроенная arrange-кнопка `GraphEdit`
+      скрыта.
 - [x] Улучшенное сопоставление позиций узлов (stable key / source line / тип).
 - [x] Панель **Localization** с генерацией ID, экспортом CSV и preview.
+- [x] Контекстное меню: Add elif/else, Add when/else, Add random branch.
+- [x] Добавление/удаление кейсов и веток из инспектора и контекстного меню.
 
 Ограничения текущей версии:
 
@@ -1931,6 +2091,11 @@ func _set_buffer_text(path: String, text: String) -> void
   статус (OK / Missing ID / Duplicate ID) и preview через
   `TranslationServer.translate()`. Если перевод не загружен в редакторе,
   preview показывает `(not translated)`.
+- `Split`-режим, копирование/вставка, дублирование, поиск по графу и
+  `Outline` не реализованы.
+- UI графа пока не локализован: подписи кнопок и инспектора английские.
+- Отдельной кнопки Export POT нет; POT обрабатывается существующей
+  локализацией Godot.
 
 Как открыть:
 
@@ -1944,20 +2109,135 @@ func _set_buffer_text(path: String, text: String) -> void
 
 ---
 
-## 18. Итог
+## 21. Changelog реализации
 
-Рекомендуемый путь:
+### 21.1. Добавленные файлы
 
-1. Оставить `.dialogue` единственным источником правды.
-2. Добавить graph-режим в существующую вкладку **Dialogue**.
-3. Сначала сделать read-only граф, затем редактирование ядра, затем все
-   продвинутые синтаксисы.
-4. Использовать `DMCompiler` + source map для построения графа.
-5. Использовать точечные текстовые патчи для обратной записи.
-6. Хранить только layout в sidecar.
-7. Переиспользовать существующие сохранение, компиляцию, тесты, ошибки и
-   локализацию.
+- `addons/dialogue_manager/graph/dialogue_graph_node.gd`
+- `addons/dialogue_manager/graph/dialogue_graph_edge.gd`
+- `addons/dialogue_manager/graph/dialogue_graph_document.gd`
+- `addons/dialogue_manager/graph/dialogue_graph_builder.gd`
+- `addons/dialogue_manager/graph/dialogue_graph_serializer.gd`
+- `addons/dialogue_manager/graph/dialogue_graph_sidecar.gd`
+- `addons/dialogue_manager/graph/dialogue_graph_node_view.gd`
+- `addons/dialogue_manager/views/graph_view.gd`
+- `addons/dialogue_manager/views/graph_view.tscn`
+- `tests/test_graph_builder.gd`
+- `tests/test_graph_serializer.gd`
+- сгенерированные Godot `.uid`-файлы для перечисленных скриптов.
 
-Такой подход даёт визуальный node-based редактор, который работает прямо в
-проекте, не ломает существующий аддон и поддерживает весь заявленный функционал,
-включая локализацию.
+### 21.2. Изменённые файлы
+
+- `addons/dialogue_manager/views/main_view.gd`:
+  - `_setup_graph_view()`;
+  - кнопка **Graph**;
+  - `_on_graph_toggle_toggled()`;
+  - `apply_graph_text()` / `_set_buffer_text()`;
+  - синхронизация в `_on_parse_timer_timeout()`;
+  - `graph_view.set_errors()` в `compile()`;
+  - `select_cue()` / `select_line()` в переходах;
+  - sidecar в `_on_files_moved()`;
+  - выбор узла из панели ошибок.
+- `addons/dialogue_manager/plugin.gd`:
+  - `DMGraphSidecar.remove(file)` в `_on_file_removed()`.
+- `addons/dialogue_manager/compiler/compiled_line.gd`:
+  - `next_id_after` в `to_data()` для `TYPE_RESPONSE`, `TYPE_DIALOGUE`,
+    `TYPE_RANDOM`.
+- `VISUAL_NODE_EDITOR_PLAN.md` — обновлён по фактической реализации.
+
+### 21.3. Реализованная функциональность
+
+- Модель графа и sidecar.
+- Построение графа из `.dialogue`:
+  - cue, dialogue, response, choices, condition, match, while, mutation,
+    jump, random, concurrent, comment, import, using, end.
+- Связи `FLOW`, `BRANCH`, `JUMP`, `RETURN`, `CONCURRENT`.
+- Редактирование:
+  - реплики, ответы, cue, jump, mutation, comment;
+  - condition/match/while/random;
+  - inline-goto (`=>` / `=><`);
+  - добавление/удаление condition/match/random-кейсов и веток.
+- Соединения:
+  - с cue и END;
+  - с любым top-level узлом через автосоздание cue;
+  - отсоединение jump/return/основного flow.
+- UI:
+  - `GraphEdit` + `GraphNode`;
+  - инспектор;
+  - контекстное меню;
+  - **Arrange all nodes**;
+  - **Localization** dialog;
+  - подсветка ошибок;
+  - тестовый запуск.
+- Интеграция:
+  - Text/Graph;
+  - общий буфер;
+  - undo/redo;
+  - sidecar move/remove;
+  - переходы из ошибок и cue.
+- Локализация:
+  - Static ID;
+  - заметки;
+  - статус Missing/Duplicate;
+  - preview;
+  - Generate IDs;
+  - Export CSV.
+
+### 21.4. Коммиты
+
+- `e5c11c8` — Document graph editor class signatures and implementation checklist
+- `be58918` — Add graph data model, builder, serializer, and sidecar
+- `4e99f21` — Add graph view and integrate it into the dialogue editor
+- `3064db0` — Add graph editor tests and fix response/comment flow handling
+- `a692833` — Improve graph editor editing, sidebar layout, and error sync
+- `a03f165` — Fix graph editor runtime errors and add Godot-generated UIDs
+- `4ae51dd` — Add remaining generated UIDs for graph editor
+- `512be7a` — Color return ports differently in the graph view
+- `7294b1c` — Document current graph editor implementation status
+- `0748813` — Implement advanced graph editing, connections, custom layout, and localization panel
+- `1812f44` — Prevent connecting from the return port in the graph view
+- `9ffada5` — Add translation preview column to the graph localization panel
+- `fcc2196` — Add and remove condition, match, and random branches from the graph inspector
+- `878d97d` — Add case and branch actions to the graph context menu
+- `ed63fce` — Document add/remove actions in the graph inspector and context menu
+- `48b9f56` — Replace the built-in arrange action with arrange all nodes
+
+### 21.5. Проверка
+
+- Godot **4.7.2**, Windows, headless editor:
+  - editor запускается без script errors/warnings;
+  - graph-тесты проходят;
+  - smoke-тесты: построение графа, инспектор для всех типов узлов,
+    соединения/отсоединение, add/remove кейсов, localization panel.
+- Полный прогон тестов проекта по-прежнему содержит старые падения
+  C#-тестов (`CSharpStaticState`), не связанные с графом.
+
+### 21.6. Что осталось
+
+- Branch/body-отсоединение.
+- `Split`-режим.
+- Копирование/вставка/дублирование/поиск по графу/Outline.
+- Полная локализация UI графа.
+- Инкрементальное обновление и оптимизация больших графов.
+- Автоматизированные интеграционные тесты.
+
+---
+
+## 22. Итог
+
+Реализованный путь:
+
+1. `.dialogue` остаётся единственным источником правды.
+2. Graph-режим добавлен в существующую вкладку **Dialogue**.
+3. Реализованы модель, builder, serializer, view, интеграция, продвинутые
+   узлы и локализация.
+4. Для построения используется `DMCompiler` + line ID/raw lines; отдельный
+   `for_editor` source map не добавлялся.
+5. Обратная запись — точечные текстовые операции (`replace_lines`,
+   `insert_lines`, `delete_lines`).
+6. Sidecar хранит только layout и fallback-данные для позиций.
+7. Переиспользованы существующие сохранение, компиляция, тесты, ошибки и
+   локализация.
+
+Итог: визуальный node-based редактор работает прямо в проекте, не ломает
+существующий аддон и поддерживает заявленный функционал, включая локализацию.
