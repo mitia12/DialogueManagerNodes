@@ -34,7 +34,7 @@ func setup(node: DMGraphNode, doc: DMGraphDocument) -> void:
 			var label: String = text if character.is_empty() else "%s: %s" % [character, text]
 			_add_port_row(_short(label), true, true, color)
 			if node.get_property("goto_is_snippet", false):
-				_add_port_row("Return", false, true, color)
+				_add_port_row("Return", false, true, Color(0.8, 0.6, 0.2))
 			_add_goto_label(node)
 
 		DMGraphNode.Kind.RESPONSE:
@@ -43,7 +43,7 @@ func setup(node: DMGraphNode, doc: DMGraphDocument) -> void:
 			var response_label: String = response_text if response_character.is_empty() else "%s: %s" % [response_character, response_text]
 			_add_port_row("- " + _short(response_label), true, true, color)
 			if node.get_property("goto_is_snippet", false):
-				_add_port_row("Return", false, true, color)
+				_add_port_row("Return", false, true, Color(0.8, 0.6, 0.2))
 			_add_goto_label(node)
 
 		DMGraphNode.Kind.CHOICES:
@@ -76,7 +76,7 @@ func setup(node: DMGraphNode, doc: DMGraphDocument) -> void:
 		DMGraphNode.Kind.JUMP:
 			_add_port_row("=> " + _short(node.get_property("target", "")), true, true, color)
 			if node.get_property("is_snippet", false):
-				_add_port_row("Return", false, true, color)
+				_add_port_row("Return", false, true, Color(0.8, 0.6, 0.2))
 
 		DMGraphNode.Kind.RANDOM:
 			_add_port_row("Random", true, false, color)
