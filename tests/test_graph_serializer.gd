@@ -83,6 +83,77 @@ func test_deletes_node() -> void:
 	assert(new_text.contains("Coco: Meow."), "Should keep the other dialogue line.")
 
 
+func test_sets_condition_cases() -> void:
+	var text: String = "~ start\nif score > 10\n\tNathan: High.\nelse\n\tNathan: Low.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+	var node: DMGraphNode = doc.get_node("condition:1")
+	var cases: Array = Array(node.get_property("cases", []))
+	cases[0].expression = "score >= 20"
+
+	var new_text: String = DMGraphSerializer.set_condition_cases(text, node, cases)
+
+	assert(new_text.contains("if score >= 20"), "Should update the if expression.")
+	assert(new_text.contains("else"), "Should keep the else case.")
+
+
+func test_sets_match_cases() -> void:
+	var text: String = "~ start\nmatch mode\n\twhen 1\n\t\tNathan: One.\n\telse\n\t\tNathan: Other.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+	var node: DMGraphNode = doc.get_node("match:1")
+	var cases: Array = Array(node.get_property("cases", []))
+	cases[0].expression = "2"
+
+	var new_text: String = DMGraphSerializer.set_match_cases(text, node, cases)
+
+	assert(new_text.contains("when 2"), "Should update the when expression.")
+
+
+func test_sets_while_expression() -> void:
+	var text: String = "~ start\nwhile count < 10\n\tNathan: Loop.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+	var node: DMGraphNode = doc.get_node("while:1")
+
+	var new_text: String = DMGraphSerializer.set_while_expression(text, node, "count < 5")
+
+	assert(new_text.contains("while count < 5"), "Should update the while expression.")
+
+
+func test_sets_random_branches() -> void:
+	var text: String = "~ start\n% Nathan: One.\n%2 Nathan: Two.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+	var node: DMGraphNode = doc.get_node("random:1")
+	var branches: Array = Array(node.get_property("branches", []))
+	branches[0].weight = 3.0
+	branches[1].condition_text = "score > 1"
+
+	var new_text: String = DMGraphSerializer.set_random_branches(text, node, branches)
+
+	assert(new_text.contains("%3 Nathan: One."), "Should update the branch weight.")
+	assert(new_text.contains("%2 [if score > 1 /] Nathan: Two."), "Should update the branch condition.")
+
+
+func test_clears_inline_goto() -> void:
+	var text: String = "~ start\nNathan: Hello. => start\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+	var node: DMGraphNode = doc.get_node("line:1")
+
+	var new_text: String = DMGraphSerializer.clear_inline_goto(text, node)
+
+	assert(not new_text.contains("=> start"), "Should remove the inline goto.")
+	assert(new_text.contains("Nathan: Hello."), "Should keep the dialogue text.")
+
+
+func test_adds_cue_before() -> void:
+	var text: String = "~ start\nNathan: Hello.\nCoco: Meow.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+	var node: DMGraphNode = doc.get_node("line:2")
+
+	var new_text: String = DMGraphSerializer.add_cue_before(text, node, "goto_line_2")
+	var lines: PackedStringArray = new_text.split("\n")
+
+	assert(lines[2] == "~ goto_line_2", "Should insert the cue before the target line.")
+
+
 func test_round_trip_without_changes() -> void:
 	var text: String = "~ start\nNathan: Hello.\n=> END"
 	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")

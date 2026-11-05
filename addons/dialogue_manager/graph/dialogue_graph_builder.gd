@@ -496,24 +496,44 @@ static func _make_match_node(
 	node.source_start = source_start
 	node.source_end = source_end
 	node.indent = indent
+	var source_cases: Array = []
+	for case: Dictionary in Array(line.get("cases", [])):
+		var case_source: int = _find_match_case_line(doc, case, source_start, source_end)
+		var case_raw: String = doc.source_lines[case_source].strip_edges() if case_source >= 0 else ""
+		source_cases.append({
+			expression = _extract_when_expression(case_raw),
+			is_else = case_raw == "else",
+			next_id = case.get("next_id", ""),
+			source_line = case_source,
+			raw_text = case_raw,
+			condition = case.get("condition", {})
+		})
+
 	node.properties = {
 		expression = _extract_condition(raw_line),
-		cases = Array(line.get("cases", [])),
+		cases = source_cases,
 		next_id_after = line.get("next_id_after", "")
 	}
 
-	for case: Dictionary in Array(line.get("cases", [])):
-		var label: String = _match_case_label(doc, case, source_start, source_end)
+	for case: Dictionary in source_cases:
+		var label: String = case.get("raw_text", "")
+		if label.is_empty():
+			label = "else" if case.get("is_else", false) else "when"
 		node.add_port(label, "case", Color(0.7, 0.45, 0.9))
 	node.add_port("After", "after", Color(0.5, 0.5, 0.5))
 	return node
 
 
-static func _match_case_label(doc: DMGraphDocument, case: Dictionary, source_start: int, _source_end: int) -> String:
+static func _find_match_case_line(
+	doc: DMGraphDocument,
+	case: Dictionary,
+	source_start: int,
+	_source_end: int
+) -> int:
 	var next_id: String = case.get("next_id", "")
 	var child_source: int = _source_line_for_id(next_id)
 	if child_source < 0 or child_source >= doc.source_lines.size():
-		return "else" if case.get("is_else", false) else "when"
+		return -1
 
 	var child_indent: int = _indent_count(doc.source_lines[child_source])
 	for i: int in range(child_source - 1, source_start - 1, -1):
@@ -526,9 +546,17 @@ static func _match_case_label(doc: DMGraphDocument, case: Dictionary, source_sta
 			continue
 		var text: String = raw_line.strip_edges()
 		if text.begins_with("when ") or text == "else":
-			return text
+			return i
 
-	return "else" if case.get("is_else", false) else "when"
+	return -1
+
+
+static func _extract_when_expression(raw_line: String) -> String:
+	var regex: DMCompilerRegEx = DMCompilerRegEx.new()
+	var found: RegExMatch = regex.CONDITION_REGEX.search(raw_line)
+	if found:
+		return found.strings[found.names.expression].strip_edges()
+	return ""
 
 
 static func _make_while_node(
@@ -623,26 +651,78 @@ static func _make_random_node(
 	node.source_start = source_start
 	node.indent = indent
 
+	var branch_lines: Array[int] = _find_random_branch_lines(doc, source_start, indent)
+	var source_branches: Array = []
 	var last_source: int = source_start
-	for branch: Dictionary in branches:
+
+	for i: int in branches.size():
+		var branch: Dictionary = branches[i]
 		var branch_id: String = branch.get("id", "")
 		var branch_source: int = _source_line_for_id(branch_id)
 		if branch_source >= 0 and branch_source < doc.source_lines.size():
 			last_source = _find_block_end(doc.source_lines, branch_source, _indent_count(doc.source_lines[branch_source]))
-		var weight: float = branch.get("weight", 1.0)
-		var condition: Dictionary = branch.get("condition", {})
-		var label: String = "%sx" % [weight]
-		if not condition.is_empty():
-			label += " [if]"
-		node.add_port(label, "random", Color(0.2, 0.8, 0.8))
+
+		var raw_line: String = ""
+		if i < branch_lines.size():
+			raw_line = doc.source_lines[branch_lines[i]].strip_edges()
+
+		source_branches.append({
+			id = branch_id,
+			weight = branch.get("weight", 1.0),
+			condition = branch.get("condition", {}),
+			condition_text = _extract_random_condition(raw_line),
+			source_line = branch_lines[i] if i < branch_lines.size() else -1,
+			raw_text = raw_line
+		})
 
 	node.source_end = last_source
 	node.properties = {
-		branches = branches,
+		branches = source_branches,
 		next_id_after = line.get("next_id_after", "")
 	}
+
+	for branch: Dictionary in source_branches:
+		var weight: float = branch.get("weight", 1.0)
+		var condition_text: String = branch.get("condition_text", "")
+		var label: String = "%sx" % [weight]
+		if not condition_text.is_empty():
+			label += " [if %s]" % [condition_text]
+		node.add_port(label, "random", Color(0.2, 0.8, 0.8))
+
 	node.add_port("After", "after", Color(0.5, 0.5, 0.5))
 	return node
+
+
+static func _find_random_branch_lines(doc: DMGraphDocument, source_start: int, indent: int) -> Array[int]:
+	var result: Array[int] = []
+	var i: int = source_start
+	while i < doc.source_lines.size():
+		var raw_line: String = doc.source_lines[i]
+		if raw_line.strip_edges().is_empty():
+			i += 1
+			continue
+
+		var line_indent: int = _indent_count(raw_line)
+		if line_indent > indent:
+			i += 1
+			continue
+		if line_indent < indent:
+			break
+		if not raw_line.strip_edges().begins_with("%"):
+			break
+
+		result.append(i)
+		i += 1
+
+	return result
+
+
+static func _extract_random_condition(raw_line: String) -> String:
+	var regex: DMCompilerRegEx = DMCompilerRegEx.new()
+	var found: RegExMatch = regex.WEIGHTED_RANDOM_SIBLINGS_REGEX.search(raw_line + " ")
+	if found and found.names.has("condition"):
+		return found.strings[found.names.condition].strip_edges()
+	return ""
 
 
 static func _make_concurrent_node(
@@ -726,7 +806,7 @@ static func _build_edges(doc: DMGraphDocument, _result: DMCompilerResult) -> voi
 			DMGraphNode.Kind.RANDOM:
 				var random_branches: Array = Array(node.get_property("branches", []))
 				for i: int in random_branches.size():
-					_add_branch(doc, node, i, random_branches[i].get("id", ""))
+					_add_branch_to_node(doc, node, i, "line:%s" % [random_branches[i].get("id", "")])
 				_add_flow(doc, node, node.get_property("next_id_after", ""), node.ports.size() - 1)
 
 			DMGraphNode.Kind.COMMENT:
@@ -931,7 +1011,7 @@ static func _indent_count(line: String) -> int:
 	return count
 
 
-static func _stable_key(line: Dictionary, index: int) -> String:
+static func _stable_key(line: Dictionary, _index: int) -> String:
 	var line_type: String = line.get("type", "")
 	var static_id: String = line.get("static_id", "")
 	var text: String = line.get("text", "")
@@ -945,7 +1025,7 @@ static func _stable_key(line: Dictionary, index: int) -> String:
 		DMConstants.TYPE_RESPONSE:
 			if not static_id.is_empty():
 				return "response:%s" % [static_id]
-			return "response:%s:%d" % [text.sha1_text(), index]
+			return "response:%s" % [text.sha1_text()]
 		DMConstants.TYPE_CONDITION:
 			return "condition:%s" % [str(line.get("condition", {})).sha1_text()]
 		DMConstants.TYPE_MATCH:
@@ -962,7 +1042,7 @@ static func _stable_key(line: Dictionary, index: int) -> String:
 		DMConstants.TYPE_RANDOM:
 			return "random:%s" % [str(line.get("siblings", [])).sha1_text()]
 		_:
-			return "%s:%d" % [line_type, index]
+			return "%s:%d" % [line_type, _index]
 
 
 static func _extract_goto(raw_line: String) -> String:

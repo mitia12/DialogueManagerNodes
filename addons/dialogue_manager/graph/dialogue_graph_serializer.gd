@@ -125,6 +125,103 @@ static func set_inline_goto(text: String, node: DMGraphNode, target: String, is_
 	return "\n".join(PackedStringArray(lines))
 
 
+static func set_condition_cases(text: String, _node: DMGraphNode, cases: Array) -> String:
+	var lines: Array = Array(text.split("\n"))
+	for i: int in cases.size():
+		var case: Dictionary = cases[i]
+		var source_line: int = case.get("source_line", -1)
+		if source_line < 0 or source_line >= lines.size():
+			continue
+
+		var indent: String = _line_indent(lines[source_line])
+		var is_else: bool = case.get("is_else", false)
+		var expression: String = _clean_expression(case.get("expression", ""))
+
+		var header: String = ""
+		if is_else:
+			header = "else"
+		elif i == 0:
+			header = "if " + expression
+		else:
+			header = "elif " + expression
+		lines[source_line] = indent + header
+
+	return "\n".join(PackedStringArray(lines))
+
+
+static func set_match_cases(text: String, _node: DMGraphNode, cases: Array) -> String:
+	var lines: Array = Array(text.split("\n"))
+	for case: Dictionary in cases:
+		var source_line: int = case.get("source_line", -1)
+		if source_line < 0 or source_line >= lines.size():
+			continue
+
+		var indent: String = _line_indent(lines[source_line])
+		var is_else: bool = case.get("is_else", false)
+		var expression: String = _clean_expression(case.get("expression", ""))
+		lines[source_line] = indent + ("else" if is_else else "when " + expression)
+
+	return "\n".join(PackedStringArray(lines))
+
+
+static func set_while_expression(text: String, node: DMGraphNode, expression: String) -> String:
+	var lines: Array = Array(text.split("\n"))
+	var start: int = node.source_start
+	if start < 0 or start >= lines.size():
+		return text
+
+	var indent: String = _line_indent(lines[start])
+	lines[start] = indent + "while " + _clean_expression(expression)
+	return "\n".join(PackedStringArray(lines))
+
+
+static func set_random_branches(text: String, _node: DMGraphNode, branches: Array) -> String:
+	var lines: Array = Array(text.split("\n"))
+	for branch: Dictionary in branches:
+		var source_line: int = branch.get("source_line", -1)
+		if source_line < 0 or source_line >= lines.size():
+			continue
+
+		var indent: String = _line_indent(lines[source_line])
+		var raw_text: String = branch.get("raw_text", "").strip_edges()
+		var weight: float = branch.get("weight", 1.0)
+		var condition: String = branch.get("condition_text", "").strip_edges()
+		var content: String = _random_branch_content(raw_text)
+
+		var prefix: String = "%"
+		if weight != 1.0:
+			prefix += _format_weight(weight)
+		if not condition.is_empty():
+			prefix += " [if %s /]" % [condition]
+		if not content.is_empty():
+			prefix += " " + content
+
+		lines[source_line] = indent + prefix
+
+	return "\n".join(PackedStringArray(lines))
+
+
+static func _format_weight(weight: float) -> String:
+	if is_equal_approx(weight, round(weight)):
+		return str(int(round(weight)))
+	return str(weight)
+
+
+static func _clean_expression(expression: String) -> String:
+	var cleaned: String = expression.strip_edges()
+	if cleaned.ends_with(":"):
+		cleaned = cleaned.substr(0, cleaned.length() - 1).strip_edges()
+	return cleaned
+
+
+static func _random_branch_content(raw_text: String) -> String:
+	var regex: DMCompilerRegEx = DMCompilerRegEx.new()
+	var found: RegExMatch = regex.WEIGHTED_RANDOM_SIBLINGS_REGEX.search(raw_text + " ")
+	if found:
+		return (raw_text + " ").substr(found.get_end()).strip_edges()
+	return raw_text.substr(1).strip_edges() if raw_text.begins_with("%") else raw_text
+
+
 static func set_comment_text(text: String, node: DMGraphNode, comment: String) -> String:
 	var lines: Array = Array(text.split("\n"))
 	var start: int = node.source_start
@@ -133,6 +230,30 @@ static func set_comment_text(text: String, node: DMGraphNode, comment: String) -
 
 	var indent: String = _line_indent(lines[start])
 	lines[start] = indent + comment
+	return "\n".join(PackedStringArray(lines))
+
+
+static func clear_inline_goto(text: String, node: DMGraphNode) -> String:
+	var lines: Array = Array(text.split("\n"))
+	var start: int = node.source_start
+	if start < 0 or start >= lines.size():
+		return text
+
+	var line: String = lines[start]
+	var regex: DMCompilerRegEx = DMCompilerRegEx.new()
+	var found: RegExMatch = regex.GOTO_REGEX.search(line)
+	if found == null:
+		return text
+
+	var static_id: String = DMCompiler.get_static_line_id(line)
+	if not static_id.is_empty():
+		line = line.replace("[ID:%s]" % [static_id], "").strip_edges()
+
+	line = line.substr(0, found.get_start()).strip_edges()
+	if not static_id.is_empty():
+		line += " [ID:%s]" % [static_id]
+
+	lines[start] = line
 	return "\n".join(PackedStringArray(lines))
 
 
@@ -182,6 +303,17 @@ static func add_response_after(text: String, node: DMGraphNode, prompt: String) 
 static func add_cue(text: String, cue: String) -> String:
 	var lines: Array = Array(text.split("\n"))
 	lines.append("~ " + cue)
+	return "\n".join(PackedStringArray(lines))
+
+
+static func add_cue_before(text: String, node: DMGraphNode, cue: String) -> String:
+	var lines: Array = Array(text.split("\n"))
+	var insert_at: int = node.source_start
+	if insert_at < 0:
+		return text
+	if insert_at > lines.size():
+		insert_at = lines.size()
+	lines.insert(insert_at, "~ " + cue)
 	return "\n".join(PackedStringArray(lines))
 
 

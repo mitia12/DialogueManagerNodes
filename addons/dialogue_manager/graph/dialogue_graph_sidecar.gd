@@ -78,24 +78,50 @@ static func apply_to_document(document: DMGraphDocument, data: Dictionary) -> vo
 		return
 
 	var node_data: Dictionary = data.get("nodes", {})
+	var used_keys: Dictionary = {}
+
 	for node: DMGraphNode in document.nodes.values():
 		var key: String = node.stable_key if not node.stable_key.is_empty() else node.id
-		var saved: Dictionary = {}
+		var matched_key: String = ""
 
-		if node_data.has(key):
-			saved = node_data[key]
+		if node_data.has(key) and not used_keys.has(key):
+			matched_key = key
 		elif node.source_start >= 0:
 			# Fall back to the source line when an edit changed the stable key.
 			for saved_key: String in node_data:
+				if used_keys.has(saved_key):
+					continue
 				var candidate: Dictionary = node_data[saved_key]
 				if candidate.get("source_start", -1) == node.source_start:
-					saved = candidate
+					matched_key = saved_key
 					break
 
-		if saved.is_empty():
+		if matched_key.is_empty() and node.source_start >= 0:
+			# Last resort: match the nearest saved node of the same kind.
+			var best_distance: int = 999999
+			for saved_key: String in node_data:
+				if used_keys.has(saved_key):
+					continue
+				var candidate: Dictionary = node_data[saved_key]
+				if candidate.get("kind", -1) != node.kind:
+					continue
+				var saved_source: int = candidate.get("source_start", -1)
+				if saved_source < 0:
+					continue
+				var distance: int = abs(saved_source - node.source_start)
+				if distance < best_distance:
+					best_distance = distance
+					matched_key = saved_key
+			if best_distance > 8:
+				matched_key = ""
+
+		if matched_key.is_empty():
 			continue
 
+		used_keys[matched_key] = true
+		var saved: Dictionary = node_data[matched_key]
 		node.has_saved_position = true
+
 		var position_data: Array = saved.get("position", [])
 		if position_data.size() == 2:
 			node.position = Vector2(position_data[0], position_data[1])
@@ -113,7 +139,8 @@ static func collect_from_document(document: DMGraphDocument) -> Dictionary:
 			position = [node.position.x, node.position.y],
 			size = [node.size.x, node.size.y],
 			collapsed = node.collapsed,
-			source_start = node.source_start
+			source_start = node.source_start,
+			kind = node.kind
 		}
 
 	return {
