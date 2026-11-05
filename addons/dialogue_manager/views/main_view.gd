@@ -78,6 +78,8 @@ var current_file_path: String = "":
 			errors_panel.hide()
 			search_and_replace.hide()
 			blank_slate.show()
+			if is_instance_valid(graph_view):
+				graph_view.clear_document()
 		else:
 			file_name_label.text = current_file_path.get_file()
 			test_button.disabled = false
@@ -101,6 +103,9 @@ var current_file_path: String = "":
 
 			_on_code_edit_text_changed()
 
+			if is_instance_valid(graph_view):
+				graph_view.load_document(current_file_path, open_buffers[current_file_path].text)
+
 			errors_panel.errors = []
 			code_edit.errors = []
 			code_edit.runtime_error = null
@@ -113,9 +118,14 @@ var current_file_path: String = "":
 # A reference to the currently open files and their last saved text
 var open_buffers: Dictionary = {}
 
+# Graph editor
+var graph_view: DMGraphView
+var graph_toggle_button: Button
+
 
 func _ready() -> void:
 	apply_theme()
+	_setup_graph_view()
 
 	# Start with nothing open
 	self.current_file_path = ""
@@ -403,12 +413,16 @@ func apply_theme() -> void:
 func go_to_cue(cue: String, create_if_none: bool = false) -> void:
 	code_edit.go_to_cue(cue, create_if_none)
 	code_edit.grab_focus()
+	if is_instance_valid(graph_view):
+		graph_view.select_cue(cue)
 
 
 # Move the cursor to a given line number.
 func go_to_line_number(line_number: int) -> void:
 	code_edit.go_to_line_number(line_number)
 	code_edit.grab_focus()
+	if is_instance_valid(graph_view):
+		graph_view.select_line(line_number)
 
 
 # Refresh the open menu with the latest files
@@ -444,6 +458,8 @@ func compile() -> void:
 	code_edit.errors = result.errors
 	errors_panel.errors = result.errors
 	cue_list.cues = code_edit.get_cues(true)
+	if is_instance_valid(graph_view):
+		graph_view.set_errors(result.errors)
 
 
 func show_build_error_dialog() -> void:
@@ -485,6 +501,8 @@ func _on_files_moved(old_file: String, new_file_path: String) -> void:
 	if open_buffers.has(old_file):
 		open_buffers[new_file_path] = open_buffers[old_file]
 		open_buffers.erase(old_file)
+	if is_instance_valid(graph_view):
+		graph_view.move_sidecar(old_file, new_file_path)
 
 
 func _on_cache_file_content_changed(path: String, new_content: String) -> void:
@@ -495,6 +513,8 @@ func _on_cache_file_content_changed(path: String, new_content: String) -> void:
 			if path == current_file_path:
 				code_edit.text = new_content
 				cue_list.cues = code_edit.get_cues(true)
+				if is_instance_valid(graph_view) and graph_view.visible:
+					graph_view.sync_from_text(new_content)
 		buffer.pristine_text = new_content
 
 
@@ -698,6 +718,8 @@ func _on_cue_list_cue_selected(cue: String) -> void:
 func _on_parse_timer_timeout() -> void:
 	parse_timer.stop()
 	compile()
+	if is_instance_valid(graph_view) and graph_view.visible:
+		graph_view.sync_from_text(code_edit.text)
 
 
 func _on_errors_panel_error_pressed(line_number: int, column_number: int) -> void:
@@ -841,6 +863,93 @@ func _on_blank_slate_new_button_pressed() -> void:
 
 func _on_blank_slate_quick_open_button_pressed() -> void:
 	quick_open()
+
+
+#region Graph
+
+
+func _setup_graph_view() -> void:
+	var code_panel: VBoxContainer = $Margin/Content/CodePanel
+	var toolbar: HBoxContainer = $Margin/Content/CodePanel/Toolbar
+
+	graph_toggle_button = Button.new()
+	graph_toggle_button.text = "Graph"
+	graph_toggle_button.tooltip_text = "Toggle graph view"
+	graph_toggle_button.toggle_mode = true
+	graph_toggle_button.flat = true
+	graph_toggle_button.toggled.connect(_on_graph_toggle_toggled)
+	toolbar.add_child(graph_toggle_button)
+	toolbar.move_child(graph_toggle_button, 0)
+
+	graph_view = preload("./graph_view.tscn").instantiate() as DMGraphView
+	graph_view.visible = false
+	graph_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	graph_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	graph_view.text_changed.connect(_on_graph_text_changed)
+	graph_view.test_requested.connect(_on_graph_test_requested)
+	graph_view.error_selected.connect(_on_graph_error_selected)
+	code_panel.add_child(graph_view)
+	code_panel.move_child(graph_view, code_panel.get_child_count() - 2)
+
+
+func _on_graph_toggle_toggled(pressed: bool) -> void:
+	if not is_instance_valid(graph_view):
+		return
+
+	if pressed and (current_file_path == "" or not open_buffers.has(current_file_path)):
+		graph_view.visible = false
+		graph_toggle_button.set_pressed_no_signal(false)
+		return
+
+	graph_view.visible = pressed
+	code_edit.visible = not pressed
+	search_and_replace.visible = false
+
+	if pressed:
+		graph_view.load_document(current_file_path, open_buffers[current_file_path].text)
+
+
+func _on_graph_text_changed(new_text: String, description: String) -> void:
+	apply_graph_text(new_text, description)
+
+
+func _on_graph_test_requested(from_key: String) -> void:
+	run_test_scene(from_key)
+
+
+func _on_graph_error_selected(line_number: int) -> void:
+	code_edit.set_caret_line(line_number - 1)
+	code_edit.grab_focus()
+
+
+func apply_graph_text(new_text: String, description: String = "Graph edit") -> void:
+	if current_file_path == "" or not open_buffers.has(current_file_path):
+		return
+	if new_text == open_buffers[current_file_path].text:
+		return
+
+	var old_text: String = open_buffers[current_file_path].text
+	var undo_redo: EditorUndoRedoManager = EditorInterface.get_editor_undo_redo()
+	undo_redo.create_action(description)
+	undo_redo.add_do_method(self, "_set_buffer_text", current_file_path, new_text)
+	undo_redo.add_undo_method(self, "_set_buffer_text", current_file_path, old_text)
+	undo_redo.commit_action()
+
+
+func _set_buffer_text(path: String, text: String) -> void:
+	if not open_buffers.has(path):
+		return
+
+	open_buffers[path].text = text
+	if path == current_file_path:
+		var cursor: Vector2 = code_edit.get_cursor()
+		var scroll: float = code_edit.scroll_vertical
+		code_edit.text = text
+		code_edit.set_cursor(cursor)
+		code_edit.scroll_vertical = scroll
+		_on_code_edit_text_changed()
+		if is_instance_valid(graph_view) and graph_view.visible:
+			graph_view.sync_from_text(text)
 
 
 #endregion

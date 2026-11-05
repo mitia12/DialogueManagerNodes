@@ -511,6 +511,7 @@ func _on_files_moved(old_file: String, new_file: String) -> void:
 func _on_file_removed(file: String) -> void:
 	DMSettings.forget_path(file)
 	_update_import_paths(file, "")
+	DMGraphSidecar.remove(file)
 	if is_instance_valid(main_view):
 		main_view.close_file(file)
 	_update_localization()
