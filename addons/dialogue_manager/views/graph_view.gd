@@ -1012,6 +1012,23 @@ func _on_popup_request(at_position: Vector2) -> void:
 	menu.add_item("Add comment", 5)
 	menu.add_separator()
 	menu.add_item("Delete selected", 100)
+
+	if selected_node != null:
+		match selected_node.kind:
+			DMGraphNode.Kind.CONDITION:
+				menu.add_separator()
+				menu.add_item("Add elif", 200)
+				if not _cases_have_else(selected_node):
+					menu.add_item("Add else", 201)
+			DMGraphNode.Kind.MATCH:
+				menu.add_separator()
+				menu.add_item("Add when", 202)
+				if not _cases_have_else(selected_node):
+					menu.add_item("Add else", 203)
+			DMGraphNode.Kind.RANDOM:
+				menu.add_separator()
+				menu.add_item("Add random branch", 204)
+
 	menu.id_pressed.connect(_on_popup_menu_id_pressed)
 	menu.popup_hide.connect(menu.queue_free)
 	add_child(menu)
@@ -1019,11 +1036,29 @@ func _on_popup_request(at_position: Vector2) -> void:
 	menu.popup()
 
 
+func _cases_have_else(node: DMGraphNode) -> bool:
+	for case: Dictionary in Array(node.get_property("cases", [])):
+		if case.get("is_else", false):
+			return true
+	return false
+
+
 func _on_popup_menu_id_pressed(id: int) -> void:
-	if id == 100:
-		_on_delete_selected_pressed()
-	else:
-		_on_add_node_pressed(id)
+	match id:
+		100:
+			_on_delete_selected_pressed()
+		200:
+			_on_add_condition_case_pressed(false)
+		201:
+			_on_add_condition_case_pressed(true)
+		202:
+			_on_add_match_case_pressed(false)
+		203:
+			_on_add_match_case_pressed(true)
+		204:
+			_on_add_random_branch_pressed()
+		_:
+			_on_add_node_pressed(id)
 
 
 func _on_delete_selected_pressed() -> void:
