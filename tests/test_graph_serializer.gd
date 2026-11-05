@@ -154,6 +154,72 @@ func test_adds_cue_before() -> void:
 	assert(lines[2] == "~ goto_line_2", "Should insert the cue before the target line.")
 
 
+func test_adds_condition_case() -> void:
+	var text: String = "~ start\nif score > 10\n\tNathan: High.\nelse\n\tNathan: Low.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+	var node: DMGraphNode = doc.get_node("condition:1")
+
+	var new_text: String = DMGraphSerializer.add_condition_case(text, node, "score > 0", false)
+
+	assert(new_text.contains("elif score > 0"), "Should add an elif case.")
+	assert(new_text.contains("Nathan: New branch"), "Should add a placeholder branch.")
+
+
+func test_removes_condition_case() -> void:
+	var text: String = "~ start\nif score > 10\n\tNathan: High.\nelse\n\tNathan: Low.\nNathan: After.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+	var node: DMGraphNode = doc.get_node("condition:1")
+
+	var new_text: String = DMGraphSerializer.remove_condition_case(text, node, 1)
+
+	assert(not new_text.contains("else"), "Should remove the else case.")
+	assert(new_text.contains("Nathan: After."), "Should keep the following line.")
+
+
+func test_adds_match_case() -> void:
+	var text: String = "~ start\nmatch mode\n\twhen 1\n\t\tNathan: One.\n\telse\n\t\tNathan: Other.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+	var node: DMGraphNode = doc.get_node("match:1")
+
+	var new_text: String = DMGraphSerializer.add_match_case(text, node, "2", false)
+
+	assert(new_text.contains("when 2"), "Should add a when case.")
+	assert(new_text.contains("Nathan: New branch"), "Should add a placeholder branch.")
+
+
+func test_removes_match_case() -> void:
+	var text: String = "~ start\nmatch mode\n\twhen 1\n\t\tNathan: One.\n\telse\n\t\tNathan: Other.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+	var node: DMGraphNode = doc.get_node("match:1")
+
+	var new_text: String = DMGraphSerializer.remove_match_case(text, node, 1)
+
+	assert(not new_text.contains("else"), "Should remove the else case.")
+	assert(new_text.contains("when 1"), "Should keep the when case.")
+
+
+func test_adds_random_branch() -> void:
+	var text: String = "~ start\n% Nathan: One.\n%2 Nathan: Two.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+	var node: DMGraphNode = doc.get_node("random:1")
+
+	var new_text: String = DMGraphSerializer.add_random_branch(text, node, 3.0, "score > 1")
+
+	assert(new_text.contains("%3 [if score > 1 /]"), "Should add a weighted conditional branch.")
+	assert(new_text.contains("Nathan: New branch"), "Should add a placeholder branch.")
+
+
+func test_removes_random_branch() -> void:
+	var text: String = "~ start\n% Nathan: One.\n%2 Nathan: Two.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+	var node: DMGraphNode = doc.get_node("random:1")
+
+	var new_text: String = DMGraphSerializer.remove_random_branch(text, node, 0)
+
+	assert(not new_text.contains("% Nathan: One."), "Should remove the first branch.")
+	assert(new_text.contains("%2 Nathan: Two."), "Should keep the second branch.")
+
+
 func test_round_trip_without_changes() -> void:
 	var text: String = "~ start\nNathan: Hello.\n=> END"
 	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")

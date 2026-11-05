@@ -459,8 +459,31 @@ func _build_inspector() -> void:
 					condition_edits.append(null)
 				else:
 					condition_edits.append(_add_line_edit("condition_case_%d" % [i], condition_case.get("expression", "")))
+				if i > 0:
+					var remove_condition_button: Button = Button.new()
+					remove_condition_button.text = "Remove case %d" % [i + 1]
+					remove_condition_button.pressed.connect(_on_remove_condition_case_pressed.bind(i))
+					inspector.add_child(remove_condition_button)
 			inspector_fields["condition_case_data"] = condition_cases
 			inspector_fields["condition_case_edits"] = condition_edits
+
+			var has_condition_else: bool = false
+			for condition_case_item: Dictionary in condition_cases:
+				if condition_case_item.get("is_else", false):
+					has_condition_else = true
+					break
+
+			var add_condition_elif: Button = Button.new()
+			add_condition_elif.text = "Add elif"
+			add_condition_elif.pressed.connect(_on_add_condition_case_pressed.bind(false))
+			inspector.add_child(add_condition_elif)
+
+			if not has_condition_else:
+				var add_condition_else_button: Button = Button.new()
+				add_condition_else_button.text = "Add else"
+				add_condition_else_button.pressed.connect(_on_add_condition_case_pressed.bind(true))
+				inspector.add_child(add_condition_else_button)
+
 			_add_apply_button()
 
 		DMGraphNode.Kind.MATCH:
@@ -474,8 +497,31 @@ func _build_inspector() -> void:
 					match_edits.append(null)
 				else:
 					match_edits.append(_add_line_edit("match_case_%d" % [i], match_case.get("expression", "")))
+				if match_cases.size() > 1:
+					var remove_match_button: Button = Button.new()
+					remove_match_button.text = "Remove case %d" % [i + 1]
+					remove_match_button.pressed.connect(_on_remove_match_case_pressed.bind(i))
+					inspector.add_child(remove_match_button)
 			inspector_fields["match_case_data"] = match_cases
 			inspector_fields["match_case_edits"] = match_edits
+
+			var has_match_else: bool = false
+			for match_case_item: Dictionary in match_cases:
+				if match_case_item.get("is_else", false):
+					has_match_else = true
+					break
+
+			var add_match_when: Button = Button.new()
+			add_match_when.text = "Add when"
+			add_match_when.pressed.connect(_on_add_match_case_pressed.bind(false))
+			inspector.add_child(add_match_when)
+
+			if not has_match_else:
+				var add_match_else_button: Button = Button.new()
+				add_match_else_button.text = "Add else"
+				add_match_else_button.pressed.connect(_on_add_match_case_pressed.bind(true))
+				inspector.add_child(add_match_else_button)
+
 			_add_apply_button()
 
 		DMGraphNode.Kind.WHILE:
@@ -497,8 +543,19 @@ func _build_inspector() -> void:
 					weight = weight_edit,
 					condition = condition_edit
 				})
+				if random_branches.size() > 1:
+					var remove_branch_button: Button = Button.new()
+					remove_branch_button.text = "Remove branch %d" % [i + 1]
+					remove_branch_button.pressed.connect(_on_remove_random_branch_pressed.bind(i))
+					inspector.add_child(remove_branch_button)
 			inspector_fields["random_branch_data"] = random_branches
 			inspector_fields["random_branch_edits"] = random_edits
+
+			var add_branch_button: Button = Button.new()
+			add_branch_button.text = "Add branch"
+			add_branch_button.pressed.connect(_on_add_random_branch_pressed)
+			inspector.add_child(add_branch_button)
+
 			_add_apply_button()
 
 		_:
@@ -974,6 +1031,48 @@ func _on_delete_selected_pressed() -> void:
 		return
 	var new_text: String = DMGraphSerializer.delete_node(document.text, selected_node)
 	_apply_text(new_text, "Delete node")
+
+
+func _on_add_condition_case_pressed(is_else: bool) -> void:
+	if selected_node == null or document == null:
+		return
+	var new_text: String = DMGraphSerializer.add_condition_case(document.text, selected_node, "condition", is_else)
+	_apply_text(new_text, "Add condition case")
+
+
+func _on_remove_condition_case_pressed(index: int) -> void:
+	if selected_node == null or document == null:
+		return
+	var new_text: String = DMGraphSerializer.remove_condition_case(document.text, selected_node, index)
+	_apply_text(new_text, "Remove condition case")
+
+
+func _on_add_match_case_pressed(is_else: bool) -> void:
+	if selected_node == null or document == null:
+		return
+	var new_text: String = DMGraphSerializer.add_match_case(document.text, selected_node, "1", is_else)
+	_apply_text(new_text, "Add match case")
+
+
+func _on_remove_match_case_pressed(index: int) -> void:
+	if selected_node == null or document == null:
+		return
+	var new_text: String = DMGraphSerializer.remove_match_case(document.text, selected_node, index)
+	_apply_text(new_text, "Remove match case")
+
+
+func _on_add_random_branch_pressed() -> void:
+	if selected_node == null or document == null:
+		return
+	var new_text: String = DMGraphSerializer.add_random_branch(document.text, selected_node, 1.0, "")
+	_apply_text(new_text, "Add random branch")
+
+
+func _on_remove_random_branch_pressed(index: int) -> void:
+	if selected_node == null or document == null:
+		return
+	var new_text: String = DMGraphSerializer.remove_random_branch(document.text, selected_node, index)
+	_apply_text(new_text, "Remove random branch")
 
 
 func _on_delete_nodes_request(nodes: Array) -> void:

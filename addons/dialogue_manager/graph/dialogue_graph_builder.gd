@@ -463,7 +463,8 @@ static func _make_condition_node(
 			expression = _extract_condition(current_raw),
 			is_else = current_raw.strip_edges() == "else",
 			next_id = current.get("next_id", ""),
-			source_line = current_source
+			source_line = current_source,
+			block_end = last_source
 		})
 
 		current_id = current.get("next_sibling_id", "")
@@ -500,11 +501,19 @@ static func _make_match_node(
 	for case: Dictionary in Array(line.get("cases", [])):
 		var case_source: int = _find_match_case_line(doc, case, source_start, source_end)
 		var case_raw: String = doc.source_lines[case_source].strip_edges() if case_source >= 0 else ""
+		var case_block_end: int = -1
+		if case_source >= 0:
+			case_block_end = _find_block_end(
+				doc.source_lines,
+				case_source,
+				_indent_count(doc.source_lines[case_source])
+			)
 		source_cases.append({
 			expression = _extract_when_expression(case_raw),
 			is_else = case_raw == "else",
 			next_id = case.get("next_id", ""),
 			source_line = case_source,
+			block_end = case_block_end,
 			raw_text = case_raw,
 			condition = case.get("condition", {})
 		})
@@ -663,15 +672,21 @@ static func _make_random_node(
 			last_source = _find_block_end(doc.source_lines, branch_source, _indent_count(doc.source_lines[branch_source]))
 
 		var raw_line: String = ""
-		if i < branch_lines.size():
-			raw_line = doc.source_lines[branch_lines[i]].strip_edges()
+		var branch_line: int = branch_lines[i] if i < branch_lines.size() else -1
+		if branch_line >= 0:
+			raw_line = doc.source_lines[branch_line].strip_edges()
+
+		var branch_block_end: int = -1
+		if branch_line >= 0:
+			branch_block_end = _find_block_end(doc.source_lines, branch_line, indent)
 
 		source_branches.append({
 			id = branch_id,
 			weight = branch.get("weight", 1.0),
 			condition = branch.get("condition", {}),
 			condition_text = _extract_random_condition(raw_line),
-			source_line = branch_lines[i] if i < branch_lines.size() else -1,
+			source_line = branch_line,
+			block_end = branch_block_end,
 			raw_text = raw_line
 		})
 

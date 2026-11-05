@@ -222,6 +222,157 @@ static func _random_branch_content(raw_text: String) -> String:
 	return raw_text.substr(1).strip_edges() if raw_text.begins_with("%") else raw_text
 
 
+static func add_condition_case(text: String, node: DMGraphNode, expression: String, is_else: bool) -> String:
+	var cases: Array = Array(node.get_property("cases", []))
+	if is_else:
+		for case: Dictionary in cases:
+			if case.get("is_else", false):
+				return text
+
+	var lines: Array = Array(text.split("\n"))
+	var indent: String = ""
+	if not cases.is_empty():
+		var first_source: int = cases[0].get("source_line", node.source_start)
+		if first_source >= 0 and first_source < lines.size():
+			indent = _line_indent(lines[first_source])
+
+	var insert_at: int = node.source_end + 1
+	if not is_else:
+		for case: Dictionary in cases:
+			if case.get("is_else", false):
+				var else_source: int = case.get("source_line", -1)
+				if else_source >= 0:
+					insert_at = else_source
+				break
+
+	var header: String = indent + ("else" if is_else else "elif " + _clean_expression(expression))
+	var child: String = indent + "\tNathan: New branch"
+	return insert_lines(text, insert_at, PackedStringArray([header, child]))
+
+
+static func remove_condition_case(text: String, node: DMGraphNode, case_index: int) -> String:
+	var cases: Array = Array(node.get_property("cases", []))
+	if case_index <= 0 or case_index >= cases.size():
+		return text
+
+	var case: Dictionary = cases[case_index]
+	var source_line: int = case.get("source_line", -1)
+	var block_end: int = case.get("block_end", source_line)
+	if source_line < 0:
+		return text
+	if block_end < source_line:
+		block_end = source_line
+	return delete_lines(text, source_line, block_end)
+
+
+static func add_match_case(text: String, node: DMGraphNode, expression: String, is_else: bool) -> String:
+	var cases: Array = Array(node.get_property("cases", []))
+	if is_else:
+		for case: Dictionary in cases:
+			if case.get("is_else", false):
+				return text
+
+	var lines: Array = Array(text.split("\n"))
+	var indent: String = ""
+	if not cases.is_empty():
+		var first_source: int = cases[0].get("source_line", node.source_start)
+		if first_source >= 0 and first_source < lines.size():
+			indent = _line_indent(lines[first_source])
+
+	var insert_at: int = node.source_end + 1
+	if not is_else:
+		for case: Dictionary in cases:
+			if case.get("is_else", false):
+				var else_source: int = case.get("source_line", -1)
+				if else_source >= 0:
+					insert_at = else_source
+				break
+
+	var header: String = indent + ("else" if is_else else "when " + _clean_expression(expression))
+	var child: String = indent + "\tNathan: New branch"
+	return insert_lines(text, insert_at, PackedStringArray([header, child]))
+
+
+static func remove_match_case(text: String, node: DMGraphNode, case_index: int) -> String:
+	var cases: Array = Array(node.get_property("cases", []))
+	if case_index < 0 or case_index >= cases.size() or cases.size() <= 1:
+		return text
+
+	var case: Dictionary = cases[case_index]
+	var source_line: int = case.get("source_line", -1)
+	var block_end: int = case.get("block_end", source_line)
+	if source_line < 0:
+		return text
+	if block_end < source_line:
+		block_end = source_line
+	return delete_lines(text, source_line, block_end)
+
+
+static func add_random_branch(text: String, node: DMGraphNode, weight: float, condition: String) -> String:
+	var branches: Array = Array(node.get_property("branches", []))
+	var lines: Array = Array(text.split("\n"))
+	var indent: String = ""
+	if not branches.is_empty():
+		var first_source: int = branches[0].get("source_line", node.source_start)
+		if first_source >= 0 and first_source < lines.size():
+			indent = _line_indent(lines[first_source])
+
+	var insert_at: int = node.source_end + 1
+	var prefix: String = "%"
+	if weight != 1.0:
+		prefix += _format_weight(weight)
+	if not condition.is_empty():
+		prefix += " [if %s /]" % [condition]
+
+	var header: String = indent + prefix
+	var child: String = indent + "\tNathan: New branch"
+	return insert_lines(text, insert_at, PackedStringArray([header, child]))
+
+
+static func remove_random_branch(text: String, node: DMGraphNode, branch_index: int) -> String:
+	var branches: Array = Array(node.get_property("branches", []))
+	if branch_index < 0 or branch_index >= branches.size() or branches.size() <= 1:
+		return text
+
+	var branch: Dictionary = branches[branch_index]
+	var source_line: int = branch.get("source_line", -1)
+	var block_end: int = branch.get("block_end", source_line)
+	if source_line < 0:
+		return text
+	if block_end < source_line:
+		block_end = source_line
+	return delete_lines(text, source_line, block_end)
+
+
+static func insert_lines(text: String, at: int, new_lines: PackedStringArray) -> String:
+	var lines: Array = Array(text.split("\n"))
+	if at < 0:
+		at = 0
+	if at > lines.size():
+		at = lines.size()
+
+	var result: Array = []
+	result.append_array(lines.slice(0, at))
+	result.append_array(Array(new_lines))
+	result.append_array(lines.slice(at))
+	return "\n".join(PackedStringArray(result))
+
+
+static func delete_lines(text: String, start_line: int, end_line: int) -> String:
+	var lines: Array = Array(text.split("\n"))
+	if start_line < 0 or start_line >= lines.size():
+		return text
+	if end_line < start_line:
+		end_line = start_line
+	if end_line >= lines.size():
+		end_line = lines.size() - 1
+
+	var result: Array = []
+	result.append_array(lines.slice(0, start_line))
+	result.append_array(lines.slice(end_line + 1))
+	return "\n".join(PackedStringArray(result))
+
+
 static func set_comment_text(text: String, node: DMGraphNode, comment: String) -> String:
 	var lines: Array = Array(text.split("\n"))
 	var start: int = node.source_start
