@@ -675,7 +675,7 @@ func _parse_tags(text: String) -> PackedStringArray:
 	return tags
 
 
-func _on_connection_request(from_node: StringName, _from_port: int, to_node: StringName, _to_port: int) -> void:
+func _on_connection_request(from_node: StringName, from_port: int, to_node: StringName, _to_port: int) -> void:
 	if document == null:
 		return
 
@@ -688,6 +688,15 @@ func _on_connection_request(from_node: StringName, _from_port: int, to_node: Str
 	var to_graph_node: DMGraphNode = document.get_node(to_id)
 	if from_graph_node == null or to_graph_node == null:
 		return
+
+	var from_view: DMGraphNodeView = node_views.get(from_id, null)
+	if from_view != null:
+		var model_port: int = from_port - from_view.get_port_slot_offset()
+		var has_return_port: bool = from_graph_node.get_property("goto_is_snippet", false) \
+			or from_graph_node.get_property("is_snippet", false)
+		if has_return_port and model_port == from_graph_node.ports.size() - 1:
+			_set_status("Connect from the main output port, not the return port.")
+			return
 
 	var target: String = ""
 	var cue_to_insert: String = ""
