@@ -121,3 +121,37 @@ func test_builds_imports() -> void:
 	assert(jump != null, "Should have a jump node.")
 	assert(jump.get_property("target") == "snippets/snippet", "Should jump to the imported cue.")
 	assert(jump.get_property("is_snippet") == true, "Should be a jump and return.")
+
+
+func test_reports_no_warnings_for_connected_dialogue() -> void:
+	var text: String = "~ start\nNathan: Hello.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+
+	assert(doc.get_validation_warnings().is_empty(), "A connected dialogue should have no warnings.")
+
+
+func test_reports_unconnected_nodes() -> void:
+	var text: String = "~ start\nNathan: Hello.\n=> END\n\n~ draft\nNathan: Not connected."
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+
+	var warnings: PackedStringArray = doc.get_validation_warnings()
+	assert(warnings.size() == 1, "Should report the unconnected draft block.")
+	assert("Unconnected nodes" in warnings[0], "Should explain which nodes are unconnected.")
+	assert("draft" in warnings[0], "Should mention the draft cue.")
+
+
+func test_reports_unreachable_end() -> void:
+	var text: String = "~ start\nNathan: Hello.\n=> start"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+
+	var warnings: PackedStringArray = doc.get_validation_warnings()
+	assert("Cannot reach the end from the start" in warnings, "Should report a missing end.")
+
+
+func test_collects_character_names() -> void:
+	var text: String = "~ start\nNathan: Hello.\nCoco: Meow.\nNathan: Bye.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+
+	assert(doc.characters.size() == 2, "Should collect unique character names.")
+	assert("Nathan" in doc.characters, "Should include Nathan.")
+	assert("Coco" in doc.characters, "Should include Coco.")

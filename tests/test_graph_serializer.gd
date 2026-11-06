@@ -72,6 +72,63 @@ func test_adds_response_after() -> void:
 	assert(new_text.contains("- Second"), "Should add a response line.")
 
 
+func test_adds_response_to_choices_group() -> void:
+	var text: String = "~ start\nNathan: Choose.\n- First\n\tNathan: One.\n- Second\n\tNathan: Two.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+	var choices: DMGraphNode = doc.get_node("choices:2")
+
+	var new_text: String = DMGraphSerializer.add_response_after(text, choices, "Third")
+	var new_doc: DMGraphDocument = DMGraphBuilder.build(new_text, "")
+	var new_choices: DMGraphNode = new_doc.get_node("choices:2")
+
+	assert(new_choices != null, "Should keep the choices node.")
+	assert(Array(new_choices.get_property("responses", [])).size() == 3, "Should add the response to the same group.")
+
+
+func test_removes_response_from_choices_group() -> void:
+	var text: String = "~ start\nNathan: Choose.\n- First\n\tNathan: One.\n- Second\n\tNathan: Two.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+	var choices: DMGraphNode = doc.get_node("choices:2")
+	var response_ids: Array = Array(choices.get_property("responses", []))
+	var second_response: DMGraphNode = doc.get_node("line:%s" % [response_ids[1]])
+
+	var new_text: String = DMGraphSerializer.delete_node(text, second_response)
+	var new_doc: DMGraphDocument = DMGraphBuilder.build(new_text, "")
+	var new_choices: DMGraphNode = new_doc.get_node("choices:2")
+
+	assert(not new_text.contains("- Second"), "Should remove the response line.")
+	assert(Array(new_choices.get_property("responses", [])).size() == 1, "Should keep the remaining response.")
+
+
+func test_moves_response_blocks() -> void:
+	var text: String = "~ start\nNathan: Choose.\n- First\n\tNathan: One.\n- Second\n\tNathan: Two.\n=> END"
+	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
+	var choices: DMGraphNode = doc.get_node("choices:2")
+	var response_ids: Array = Array(choices.get_property("responses", []))
+	var first_response: DMGraphNode = doc.get_node("line:%s" % [response_ids[0]])
+	var second_response: DMGraphNode = doc.get_node("line:%s" % [response_ids[1]])
+
+	var moved_down: String = DMGraphSerializer.move_node_block(
+		text,
+		first_response,
+		second_response.source_end + 1
+	)
+	assert(moved_down.find("- Second") < moved_down.find("- First"), "Should move the first response down.")
+
+	var moved_up: String = DMGraphSerializer.move_node_block(
+		text,
+		second_response,
+		first_response.source_start
+	)
+	assert(moved_up.find("- Second") < moved_up.find("- First"), "Should move the second response up.")
+
+	var moved_doc: DMGraphDocument = DMGraphBuilder.build(moved_up, "")
+	var moved_choices: DMGraphNode = moved_doc.get_node("choices:2")
+	var moved_ids: Array = Array(moved_choices.get_property("responses", []))
+	var moved_first: DMGraphNode = moved_doc.get_node("line:%s" % [moved_ids[0]])
+	assert(moved_first.get_property("text") == "Second", "Should update the response order in the graph.")
+
+
 func test_deletes_node() -> void:
 	var text: String = "~ start\nNathan: Hello.\nCoco: Meow.\n=> END"
 	var doc: DMGraphDocument = DMGraphBuilder.build(text, "")
@@ -152,6 +209,38 @@ func test_adds_cue_before() -> void:
 	var lines: PackedStringArray = new_text.split("\n")
 
 	assert(lines[2] == "~ goto_line_2", "Should insert the cue before the target line.")
+
+
+func test_adds_standalone_node() -> void:
+	var text: String = "~ start\nNathan: Hello.\n=> END"
+	var new_text: String = DMGraphSerializer.add_standalone_node(
+		text,
+		DMGraphNode.Kind.DIALOGUE,
+		"draft"
+	)
+	var doc: DMGraphDocument = DMGraphBuilder.build(new_text, "")
+
+	assert(doc.cues.has("draft"), "Should add a cue for the standalone block.")
+	assert(new_text.contains("Nathan: New dialogue"), "Should add the new dialogue line.")
+	assert(doc.get_validation_warnings().size() == 1, "The new block should be unconnected.")
+
+
+func test_adds_unconnected_node() -> void:
+	var text: String = "~ start\nNathan: Hello."
+	var new_text: String = DMGraphSerializer.add_unconnected_node(text, DMGraphNode.Kind.DIALOGUE)
+	var doc: DMGraphDocument = DMGraphBuilder.build(new_text, "")
+
+	assert(new_text.contains("=> END"), "Should terminate the previous flow before the new node.")
+
+	var new_node: DMGraphNode = null
+	for node: DMGraphNode in doc.nodes.values():
+		if node.kind == DMGraphNode.Kind.DIALOGUE and node.get_property("text") == "New dialogue":
+			new_node = node
+			break
+
+	assert(new_node != null, "Should add the new dialogue node.")
+	assert(doc.get_edges_to(new_node.id).is_empty(), "The new node should have no incoming connections.")
+	assert(doc.get_edges_from(new_node.id).is_empty(), "The new node should have no outgoing connections.")
 
 
 func test_adds_condition_case() -> void:

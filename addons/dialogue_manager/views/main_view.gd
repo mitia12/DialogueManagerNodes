@@ -121,11 +121,14 @@ var open_buffers: Dictionary = {}
 # Graph editor
 var graph_view: DMGraphView
 var graph_toggle_button: Button
+var side_panel: Control
+var side_panel_toggle_button: Button
 
 
 func _ready() -> void:
 	apply_theme()
 	_setup_graph_view()
+	_setup_side_panel_toggle()
 
 	# Start with nothing open
 	self.current_file_path = ""
@@ -869,6 +872,27 @@ func _on_blank_slate_quick_open_button_pressed() -> void:
 
 
 #region Graph
+
+
+func _setup_side_panel_toggle() -> void:
+	var toolbar: HBoxContainer = $Margin/Content/CodePanel/Toolbar
+	side_panel = $Margin/Content/SidePanel
+	side_panel.visible = false
+
+	side_panel_toggle_button = Button.new()
+	side_panel_toggle_button.text = "Sidebar"
+	side_panel_toggle_button.tooltip_text = "Show or hide the files and cues panel"
+	side_panel_toggle_button.toggle_mode = true
+	side_panel_toggle_button.flat = true
+	side_panel_toggle_button.button_pressed = false
+	side_panel_toggle_button.toggled.connect(_on_side_panel_toggle_toggled)
+	toolbar.add_child(side_panel_toggle_button)
+	toolbar.move_child(side_panel_toggle_button, 0)
+
+
+func _on_side_panel_toggle_toggled(pressed: bool) -> void:
+	if is_instance_valid(side_panel):
+		side_panel.visible = pressed
 
 
 func _setup_graph_view() -> void:

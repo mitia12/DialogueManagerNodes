@@ -11,6 +11,7 @@ static func build(text: String, path: String) -> DMGraphDocument:
 	var result: DMCompilerResult = DMCompiler.compile_string(text, path)
 	doc.errors = result.errors
 	doc.using_states = result.using_states
+	doc.characters = result.character_names.duplicate()
 	doc.imports = _extract_imports(doc.source_lines)
 
 	_build_file_nodes(doc, result)
@@ -168,7 +169,8 @@ static func _build_line_nodes(doc: DMGraphDocument, result: DMCompilerResult) ->
 				comment_node.source_end = source_start
 				comment_node.indent = indent
 				comment_node.properties = {
-					text = raw_line.strip_edges(),
+					text = raw_line.strip_edges().trim_prefix("#").trim_prefix("#").strip_edges(),
+					raw_text = raw_line,
 					next_id = line.get("next_id", "")
 				}
 				comment_node.add_port("out", "flow", Color(0.5, 0.5, 0.5))

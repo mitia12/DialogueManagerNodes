@@ -19,12 +19,22 @@ var current_path: String = ""
 
 var graph_edit: GraphEdit
 var inspector: VBoxContainer
+var inspector_scroll: ScrollContainer
+var inspector_toggle_button: Button
 var status_label: Label
+var warning_icon: Button
+var graph_area: Control
 var node_views: Dictionary = {}
 var selected_node: DMGraphNode
 var inspector_fields: Dictionary = {}
 var popup_position: Vector2 = Vector2.ZERO
 var last_errors: Array[DMError] = []
+var _popup_add_only: bool = false
+var _add_menu_is_standalone: bool = false
+var _pending_focus_kind: int = -1
+var _pending_focus_cue: String = ""
+var _pending_focus_source: int = -1
+var _pending_focus_center: bool = true
 
 
 func _ready() -> void:
@@ -55,6 +65,7 @@ func clear_document() -> void:
 				graph_edit.remove_child(child)
 				child.queue_free()
 	_build_inspector()
+	_update_warning_icon()
 
 
 func sync_from_text(text: String) -> void:
@@ -108,7 +119,37 @@ func _apply_errors() -> void:
 		view.set_error_state(has_error)
 
 
-func select_node(node_id: String) -> void:
+func _update_warning_icon() -> void:
+	if not is_instance_valid(warning_icon):
+		return
+
+	if document == null:
+		warning_icon.hide()
+		warning_icon.tooltip_text = ""
+		return
+
+	var warnings: PackedStringArray = document.get_validation_warnings()
+	if warnings.is_empty():
+		warning_icon.hide()
+		warning_icon.tooltip_text = ""
+		return
+
+	warning_icon.tooltip_text = "\n".join(warnings)
+	warning_icon.show()
+	warning_icon.move_to_front()
+
+
+func _on_warning_icon_pressed() -> void:
+	if document == null:
+		return
+	var warnings: PackedStringArray = document.get_validation_warnings()
+	var message: String = "\n".join(warnings)
+	if message.is_empty():
+		message = "The graph is connected."
+	_set_status(message.replace("\n", " | "))
+
+
+func select_node(node_id: String, scroll_to_node: bool = true) -> void:
 	if not node_views.has(node_id):
 		return
 
@@ -117,7 +158,7 @@ func select_node(node_id: String) -> void:
 	selected_node = view.graph_node
 	_build_inspector()
 
-	if is_instance_valid(graph_edit) and graph_edit.is_visible_in_tree():
+	if scroll_to_node and is_instance_valid(graph_edit) and graph_edit.is_visible_in_tree():
 		graph_edit.scroll_offset = view.position_offset - graph_edit.size / 2
 
 
@@ -163,7 +204,12 @@ func _build_ui() -> void:
 	add_popup.add_item("Jump", 3)
 	add_popup.add_item("Mutation", 4)
 	add_popup.add_item("Comment", 5)
+	add_popup.add_item("Condition", 6)
+	add_popup.add_item("Match", 7)
+	add_popup.add_item("While", 8)
+	add_popup.add_item("Random", 9)
 	add_popup.id_pressed.connect(_on_add_node_pressed)
+	add_popup.about_to_popup.connect(func() -> void: _add_menu_is_standalone = false)
 	toolbar.add_child(add_button)
 
 	var auto_button: Button = Button.new()
@@ -182,6 +228,21 @@ func _build_ui() -> void:
 	localization_button.pressed.connect(_open_localization_panel)
 	toolbar.add_child(localization_button)
 
+	var colors_button: Button = Button.new()
+	colors_button.text = "Colors"
+	colors_button.tooltip_text = "Choose a title color for each node type"
+	colors_button.pressed.connect(_open_colors_dialog)
+	toolbar.add_child(colors_button)
+
+	inspector_toggle_button = Button.new()
+	inspector_toggle_button.text = "Inspector"
+	inspector_toggle_button.tooltip_text = "Show or hide the node inspector"
+	inspector_toggle_button.toggle_mode = true
+	inspector_toggle_button.flat = true
+	inspector_toggle_button.button_pressed = false
+	inspector_toggle_button.toggled.connect(_on_inspector_toggle_toggled)
+	toolbar.add_child(inspector_toggle_button)
+
 	var spacer: Control = Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	toolbar.add_child(spacer)
@@ -195,9 +256,13 @@ func _build_ui() -> void:
 	split.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root.add_child(split)
 
+	graph_area = Control.new()
+	graph_area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	graph_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	split.add_child(graph_area)
+
 	graph_edit = GraphEdit.new()
-	graph_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	graph_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	graph_edit.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	graph_edit.show_grid = true
 	graph_edit.set_show_arrange_button(false)
 	graph_edit.snapping_enabled = true
@@ -217,11 +282,38 @@ func _build_ui() -> void:
 	graph_edit.popup_request.connect(_on_popup_request)
 	graph_edit.delete_nodes_request.connect(_on_delete_nodes_request)
 	graph_edit.end_node_move.connect(_on_end_node_move)
-	split.add_child(graph_edit)
+	graph_edit.gui_input.connect(_on_graph_edit_gui_input)
+	graph_area.add_child(graph_edit)
 
-	var inspector_scroll: ScrollContainer = ScrollContainer.new()
+	warning_icon = Button.new()
+	warning_icon.text = "!"
+	warning_icon.tooltip_text = ""
+	warning_icon.focus_mode = Control.FOCUS_NONE
+	warning_icon.flat = false
+	warning_icon.custom_minimum_size = Vector2(24, 24)
+	warning_icon.size = Vector2(24, 24)
+	warning_icon.add_theme_font_size_override("font_size", 14)
+	var warning_style: StyleBoxFlat = StyleBoxFlat.new()
+	warning_style.bg_color = Color(0.85, 0.15, 0.15)
+	warning_style.corner_radius_top_left = 12
+	warning_style.corner_radius_top_right = 12
+	warning_style.corner_radius_bottom_left = 12
+	warning_style.corner_radius_bottom_right = 12
+	warning_icon.add_theme_stylebox_override("normal", warning_style)
+	warning_icon.add_theme_stylebox_override("hover", warning_style)
+	warning_icon.add_theme_stylebox_override("pressed", warning_style)
+	warning_icon.add_theme_color_override("font_color", Color.WHITE)
+	warning_icon.add_theme_color_override("font_hover_color", Color.WHITE)
+	warning_icon.add_theme_color_override("font_pressed_color", Color.WHITE)
+	warning_icon.pressed.connect(_on_warning_icon_pressed)
+	graph_area.add_child(warning_icon)
+	warning_icon.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT, Control.PRESET_MODE_MINSIZE, 8)
+	warning_icon.hide()
+
+	inspector_scroll = ScrollContainer.new()
 	inspector_scroll.custom_minimum_size = Vector2(280, 0)
 	inspector_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	inspector_scroll.visible = false
 	split.add_child(inspector_scroll)
 
 	inspector = VBoxContainer.new()
@@ -229,6 +321,11 @@ func _build_ui() -> void:
 	inspector_scroll.add_child(inspector)
 
 	_build_inspector()
+
+
+func _on_inspector_toggle_toggled(pressed: bool) -> void:
+	if is_instance_valid(inspector_scroll):
+		inspector_scroll.visible = pressed
 
 
 func _build_graph() -> void:
@@ -244,11 +341,13 @@ func _build_graph() -> void:
 
 	if document == null:
 		is_building = false
+		_update_warning_icon()
 		return
 
 	for node: DMGraphNode in document.nodes.values():
 		var view: DMGraphNodeView = DMGraphNodeView.new()
 		view.setup(node, document)
+		view.property_changed.connect(_on_node_view_property_changed)
 		graph_edit.add_child(view)
 		node_views[node.id] = view
 
@@ -286,6 +385,7 @@ func _build_graph() -> void:
 		_arrange_graph()
 
 	_apply_errors()
+	_update_warning_icon()
 	is_building = false
 
 
@@ -393,7 +493,7 @@ func _build_inspector() -> void:
 	match selected_node.kind:
 		DMGraphNode.Kind.DIALOGUE:
 			_add_label("Character")
-			_add_line_edit("character", selected_node.get_property("character", ""))
+			_add_character_dropdown("character", selected_node.get_property("character", ""))
 			_add_label("Text")
 			_add_text_edit("text", selected_node.get_property("text", ""))
 			_add_label("Tags")
@@ -409,7 +509,7 @@ func _build_inspector() -> void:
 
 		DMGraphNode.Kind.RESPONSE:
 			_add_label("Character")
-			_add_line_edit("character", selected_node.get_property("character", ""))
+			_add_character_dropdown("character", selected_node.get_property("character", ""))
 			_add_label("Prompt")
 			_add_line_edit("text", selected_node.get_property("text", ""))
 			_add_label("Tags")
@@ -424,6 +524,57 @@ func _build_inspector() -> void:
 			_add_label("Translator note")
 			_add_read_only_text(selected_node.get_property("notes", ""))
 			_add_apply_button()
+
+		DMGraphNode.Kind.CHOICES:
+			var choice_response_ids: Array = Array(selected_node.get_property("responses", []))
+			_add_label("Responses (%d)" % [choice_response_ids.size()])
+
+			for i: int in choice_response_ids.size():
+				var response_id: String = str(choice_response_ids[i])
+				var response_node: DMGraphNode = _choice_response_node(response_id)
+				if response_node == null:
+					_add_label("%d. (missing response)" % [i + 1])
+					continue
+
+				var response_row: HBoxContainer = HBoxContainer.new()
+				response_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+				var move_up_button: Button = Button.new()
+				move_up_button.text = "↑"
+				move_up_button.tooltip_text = "Move response up"
+				move_up_button.custom_minimum_size = Vector2(28, 0)
+				move_up_button.disabled = i == 0
+				move_up_button.pressed.connect(_on_move_choice_response_pressed.bind(i, -1))
+				response_row.add_child(move_up_button)
+
+				var move_down_button: Button = Button.new()
+				move_down_button.text = "↓"
+				move_down_button.tooltip_text = "Move response down"
+				move_down_button.custom_minimum_size = Vector2(28, 0)
+				move_down_button.disabled = i == choice_response_ids.size() - 1
+				move_down_button.pressed.connect(_on_move_choice_response_pressed.bind(i, 1))
+				response_row.add_child(move_down_button)
+
+				var edit_response_button: Button = Button.new()
+				edit_response_button.text = _choice_response_label(response_node, i)
+				edit_response_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+				edit_response_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				edit_response_button.tooltip_text = "Edit this response"
+				edit_response_button.pressed.connect(_on_choice_response_selected.bind(response_node.id))
+				response_row.add_child(edit_response_button)
+
+				var remove_response_button: Button = Button.new()
+				remove_response_button.text = "Remove"
+				remove_response_button.tooltip_text = "Remove this response"
+				remove_response_button.pressed.connect(_on_remove_choice_response_pressed.bind(response_node.id))
+				response_row.add_child(remove_response_button)
+
+				inspector.add_child(response_row)
+
+			var add_response_button: Button = Button.new()
+			add_response_button.text = "Add response"
+			add_response_button.pressed.connect(_on_add_choice_response_pressed.bind(selected_node.id))
+			inspector.add_child(add_response_button)
 
 		DMGraphNode.Kind.CUE:
 			_add_label("Cue name")
@@ -584,6 +735,47 @@ func _add_line_edit(key: String, value: String) -> LineEdit:
 	return edit
 
 
+func _add_character_dropdown(key: String, value: String) -> OptionButton:
+	var picker: OptionButton = OptionButton.new()
+	picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	picker.add_item("(Narration)")
+	picker.set_item_metadata(0, "")
+
+	var character_names: PackedStringArray = []
+	if document != null:
+		character_names = document.characters.duplicate()
+	if not value.is_empty() and not character_names.has(value):
+		character_names.append(value)
+
+	var selected_index: int = 0
+	for character_name: String in character_names:
+		picker.add_item(character_name)
+		var item_index: int = picker.item_count - 1
+		picker.set_item_metadata(item_index, character_name)
+		if character_name == value:
+			selected_index = item_index
+
+	picker.select(selected_index)
+	var character_color: Color = DMGraphColors.get_character_color(value)
+	picker.add_theme_color_override("font_color", character_color)
+	picker.add_theme_color_override("font_hover_color", character_color.lightened(0.2))
+	picker.add_theme_color_override("font_pressed_color", character_color.lightened(0.2))
+
+	inspector.add_child(picker)
+	inspector_fields[key] = picker
+	return picker
+
+
+func _get_character_value() -> String:
+	var picker: Variant = inspector_fields.get("character", null)
+	if picker is OptionButton:
+		var index: int = (picker as OptionButton).selected
+		if index >= 0:
+			return str((picker as OptionButton).get_item_metadata(index))
+	return ""
+
+
 func _add_text_edit(key: String, value: String) -> TextEdit:
 	var edit: TextEdit = TextEdit.new()
 	edit.text = value
@@ -625,7 +817,7 @@ func _on_apply_inspector_pressed() -> void:
 	match selected_node.kind:
 		DMGraphNode.Kind.DIALOGUE:
 			var dialogue_properties: Dictionary = {
-				character = inspector_fields["character"].text,
+				character = _get_character_value(),
 				text = inspector_fields["text"].text,
 				tags = _parse_tags(inspector_fields["tags"].text),
 				static_id = inspector_fields["static_id"].text,
@@ -636,7 +828,7 @@ func _on_apply_inspector_pressed() -> void:
 
 		DMGraphNode.Kind.RESPONSE:
 			var response_properties: Dictionary = {
-				character = inspector_fields["character"].text,
+				character = _get_character_value(),
 				text = inspector_fields["text"].text,
 				tags = _parse_tags(inspector_fields["tags"].text),
 				condition = inspector_fields["condition"].text,
@@ -723,6 +915,114 @@ func _on_apply_inspector_pressed() -> void:
 	_apply_text(new_text, "Edit node")
 
 
+func _on_node_view_property_changed(node: DMGraphNode, key: String, value: Variant) -> void:
+	if document == null or node == null or is_syncing or is_building:
+		return
+
+	var new_text: String = document.text
+	match node.kind:
+		DMGraphNode.Kind.DIALOGUE:
+			var dialogue_properties: Dictionary = {
+				character = node.get_property("character", ""),
+				text = node.get_property("text", ""),
+				tags = PackedStringArray(node.get_property("tags", [])),
+				static_id = node.get_property("static_id", ""),
+				goto = node.get_property("goto", ""),
+				goto_is_snippet = node.get_property("goto_is_snippet", false)
+			}
+			dialogue_properties[key] = value
+			new_text = DMGraphSerializer.set_dialogue_properties(new_text, node, dialogue_properties)
+
+		DMGraphNode.Kind.RESPONSE:
+			var response_properties: Dictionary = {
+				character = node.get_property("character", ""),
+				text = node.get_property("text", ""),
+				tags = PackedStringArray(node.get_property("tags", [])),
+				condition = node.get_property("condition", ""),
+				goto = node.get_property("goto", ""),
+				goto_is_snippet = node.get_property("goto_is_snippet", false),
+				static_id = node.get_property("static_id", "")
+			}
+			response_properties[key] = value
+			new_text = DMGraphSerializer.set_response_properties(new_text, node, response_properties)
+
+		DMGraphNode.Kind.CUE:
+			if key != "cue":
+				return
+			new_text = DMGraphSerializer.set_cue_name(new_text, node, str(value))
+
+		DMGraphNode.Kind.JUMP:
+			if key != "target":
+				return
+			var jump_raw_text: String = node.get_property("raw_text", "")
+			if jump_raw_text.strip_edges().begins_with("%"):
+				new_text = DMGraphSerializer.set_inline_goto(
+					new_text,
+					node,
+					str(value),
+					node.get_property("is_snippet", false)
+				)
+			else:
+				new_text = DMGraphSerializer.set_jump_target(
+					new_text,
+					node,
+					str(value),
+					node.get_property("is_snippet", false)
+				)
+
+		DMGraphNode.Kind.MUTATION:
+			if key != "expression":
+				return
+			new_text = DMGraphSerializer.set_mutation_expression(
+				new_text,
+				node,
+				str(value),
+				node.get_property("is_blocking", true)
+			)
+
+		DMGraphNode.Kind.COMMENT:
+			if key != "text":
+				return
+			new_text = DMGraphSerializer.set_comment_text(new_text, node, str(value))
+
+		DMGraphNode.Kind.CONDITION:
+			if not key.begins_with("condition_case:"):
+				return
+			var case_index: int = key.trim_prefix("condition_case:").to_int()
+			var condition_cases: Array = Array(node.get_property("cases", [])).duplicate(true)
+			if case_index < 0 or case_index >= condition_cases.size():
+				return
+			condition_cases[case_index].expression = str(value)
+			new_text = DMGraphSerializer.set_condition_cases(new_text, node, condition_cases)
+
+		DMGraphNode.Kind.MATCH:
+			if not key.begins_with("match_case:"):
+				return
+			var match_index: int = key.trim_prefix("match_case:").to_int()
+			var match_cases: Array = Array(node.get_property("cases", [])).duplicate(true)
+			if match_index < 0 or match_index >= match_cases.size():
+				return
+			match_cases[match_index].expression = str(value)
+			new_text = DMGraphSerializer.set_match_cases(new_text, node, match_cases)
+
+		DMGraphNode.Kind.WHILE:
+			if key != "expression":
+				return
+			new_text = DMGraphSerializer.set_while_expression(new_text, node, str(value))
+
+		_:
+			return
+
+	if new_text == document.text:
+		return
+
+	_pending_focus_kind = node.kind
+	_pending_focus_cue = ""
+	_pending_focus_source = node.source_start
+	_pending_focus_center = false
+	_apply_text(new_text, "Edit node")
+
+
 func _parse_tags(text: String) -> PackedStringArray:
 	var tags: PackedStringArray = []
 	for part: String in text.split(","):
@@ -732,6 +1032,109 @@ func _parse_tags(text: String) -> PackedStringArray:
 		if not tag.is_empty():
 			tags.append(tag)
 	return tags
+
+
+func _choice_response_node(response_id: String) -> DMGraphNode:
+	if document == null:
+		return null
+
+	var node_id: String = str(document.line_nodes.get(response_id, ""))
+	if node_id.is_empty():
+		node_id = "line:%s" % [response_id]
+	if not document.nodes.has(node_id):
+		return null
+
+	var node: DMGraphNode = document.get_node(node_id)
+	if node == null or node.kind != DMGraphNode.Kind.RESPONSE:
+		return null
+	return node
+
+
+func _choice_response_label(response_node: DMGraphNode, index: int) -> String:
+	var character: String = response_node.get_property("character", "")
+	var text: String = response_node.get_property("text", "")
+	var label: String = text if character.is_empty() else "%s: %s" % [character, text]
+	var condition: String = response_node.get_property("condition", "")
+	if not condition.is_empty():
+		label += " [if %s /]" % [condition]
+	return "%d. %s" % [index + 1, _shorten_text(label)]
+
+
+func _shorten_text(text: String, max_length: int = 48) -> String:
+	var single_line: String = text.replace("\n", " ")
+	if single_line.length() > max_length:
+		return single_line.substr(0, max_length - 3) + "..."
+	return single_line
+
+
+func _on_choice_response_selected(node_id: String) -> void:
+	select_node(node_id)
+
+
+func _on_remove_choice_response_pressed(node_id: String) -> void:
+	if document == null:
+		return
+
+	var response_node: DMGraphNode = document.get_node(node_id)
+	if response_node == null or response_node.kind != DMGraphNode.Kind.RESPONSE:
+		return
+
+	var new_text: String = DMGraphSerializer.delete_node(document.text, response_node)
+	_apply_text(new_text, "Remove response")
+
+
+func _on_move_choice_response_pressed(index: int, direction: int) -> void:
+	if document == null or selected_node == null or selected_node.kind != DMGraphNode.Kind.CHOICES:
+		return
+
+	var response_ids: Array = Array(selected_node.get_property("responses", []))
+	var target_index: int = index + direction
+	if index < 0 or index >= response_ids.size():
+		return
+	if target_index < 0 or target_index >= response_ids.size():
+		return
+
+	var response_nodes: Array[DMGraphNode] = []
+	for response_id: String in response_ids:
+		var response_node: DMGraphNode = _choice_response_node(str(response_id))
+		if response_node == null:
+			return
+		response_nodes.append(response_node)
+
+	var response: DMGraphNode = response_nodes[index]
+	var target: DMGraphNode = response_nodes[target_index]
+	var block_length: int = response.source_end - response.source_start + 1
+	var before_line: int = target.source_start if direction < 0 else target.source_end + 1
+	var new_text: String = DMGraphSerializer.move_node_block(document.text, response, before_line)
+	if new_text == document.text:
+		return
+
+	var choices_source: int = response_nodes[0].source_start
+	if direction > 0 and index == 0:
+		# Moving the first response down changes the start of the choices group.
+		choices_source = response_nodes[1].source_start - block_length
+
+	_pending_focus_kind = DMGraphNode.Kind.CHOICES
+	_pending_focus_cue = ""
+	_pending_focus_source = choices_source
+	_pending_focus_center = false
+	_apply_text(new_text, "Move response")
+
+
+func _on_add_choice_response_pressed(choices_id: String) -> void:
+	if document == null:
+		return
+
+	var choices_node: DMGraphNode = document.get_node(choices_id)
+	if choices_node == null or choices_node.kind != DMGraphNode.Kind.CHOICES:
+		return
+
+	var new_text: String = DMGraphSerializer.add_response_after(document.text, choices_node, "New response")
+
+	_pending_focus_kind = DMGraphNode.Kind.RESPONSE
+	_pending_focus_cue = ""
+	_pending_focus_source = choices_node.source_end + 1
+	_apply_text(new_text, "Add response")
 
 
 func _on_connection_request(from_node: StringName, from_port: int, to_node: StringName, _to_port: int) -> void:
@@ -1003,8 +1406,37 @@ func _on_node_deselected(_node: Node) -> void:
 	pass
 
 
+func _on_graph_edit_gui_input(event: InputEvent) -> void:
+	var mouse_event: InputEventMouseButton = event as InputEventMouseButton
+	if mouse_event == null:
+		return
+	if mouse_event.button_index != MOUSE_BUTTON_LEFT or not mouse_event.double_click:
+		return
+	_on_empty_double_clicked(mouse_event.position)
+
+
+func _on_empty_double_clicked(at_position: Vector2) -> void:
+	if _is_graph_node_at(at_position):
+		return
+	_popup_add_only = true
+	_on_popup_request(at_position)
+
+
+func _is_graph_node_at(at_position: Vector2) -> bool:
+	var global_position: Vector2 = graph_edit.get_global_transform() * at_position
+	for node_id: String in node_views:
+		var view: DMGraphNodeView = node_views[node_id]
+		if is_instance_valid(view) and view.get_global_rect().has_point(global_position):
+			return true
+	return false
+
+
 func _on_popup_request(at_position: Vector2) -> void:
 	popup_position = at_position
+	var add_only: bool = _popup_add_only
+	_popup_add_only = false
+	_add_menu_is_standalone = add_only
+
 	var menu: PopupMenu = PopupMenu.new()
 	menu.add_item("Add dialogue", 0)
 	menu.add_item("Add response", 1)
@@ -1012,27 +1444,34 @@ func _on_popup_request(at_position: Vector2) -> void:
 	menu.add_item("Add jump", 3)
 	menu.add_item("Add mutation", 4)
 	menu.add_item("Add comment", 5)
-	menu.add_separator()
-	menu.add_item("Delete selected", 100)
+	menu.add_item("Add condition", 6)
+	menu.add_item("Add match", 7)
+	menu.add_item("Add while", 8)
+	menu.add_item("Add random", 9)
 
-	if selected_node != null:
-		match selected_node.kind:
-			DMGraphNode.Kind.CONDITION:
-				menu.add_separator()
-				menu.add_item("Add elif", 200)
-				if not _cases_have_else(selected_node):
-					menu.add_item("Add else", 201)
-			DMGraphNode.Kind.MATCH:
-				menu.add_separator()
-				menu.add_item("Add when", 202)
-				if not _cases_have_else(selected_node):
-					menu.add_item("Add else", 203)
-			DMGraphNode.Kind.RANDOM:
-				menu.add_separator()
-				menu.add_item("Add random branch", 204)
+	if not add_only:
+		menu.add_separator()
+		menu.add_item("Delete selected", 100)
+
+		if selected_node != null:
+			match selected_node.kind:
+				DMGraphNode.Kind.CONDITION:
+					menu.add_separator()
+					menu.add_item("Add elif", 200)
+					if not _cases_have_else(selected_node):
+						menu.add_item("Add else", 201)
+				DMGraphNode.Kind.MATCH:
+					menu.add_separator()
+					menu.add_item("Add when", 202)
+					if not _cases_have_else(selected_node):
+						menu.add_item("Add else", 203)
+				DMGraphNode.Kind.RANDOM:
+					menu.add_separator()
+					menu.add_item("Add random branch", 204)
 
 	menu.id_pressed.connect(_on_popup_menu_id_pressed)
 	menu.popup_hide.connect(menu.queue_free)
+	menu.popup_hide.connect(func() -> void: _add_menu_is_standalone = false)
 	add_child(menu)
 	menu.position = Vector2i(graph_edit.get_screen_position() + at_position)
 	menu.popup()
@@ -1165,22 +1604,35 @@ func _on_end_node_move() -> void:
 func _on_add_node_pressed(kind: int) -> void:
 	if document == null:
 		return
-	if kind != 2 and (selected_node == null or selected_node.source_start < 0):
-		_set_status("Select a node with a source line first.")
+
+	var graph_kind: DMGraphNode.Kind = _kind_from_menu_id(kind)
+	if kind < 0 or kind > 9:
 		return
 
-	if kind == 1 and selected_node.kind not in [DMGraphNode.Kind.DIALOGUE, DMGraphNode.Kind.CHOICES, DMGraphNode.Kind.RESPONSE]:
-		_set_status("Select a dialogue, choices, or response node to add a response.")
+	var create_standalone: bool = _add_menu_is_standalone or kind in [2, 6, 7, 8, 9]
+	_add_menu_is_standalone = false
+
+	if not create_standalone:
+		create_standalone = selected_node == null or selected_node.source_start < 0
+
+	if not create_standalone and kind == 1 and selected_node.kind not in [
+		DMGraphNode.Kind.DIALOGUE,
+		DMGraphNode.Kind.CHOICES,
+		DMGraphNode.Kind.RESPONSE
+	]:
+		create_standalone = true
+
+	if create_standalone:
+		_add_standalone_node(graph_kind)
 		return
 
+	var insert_at: int = selected_node.source_end + 1
 	var new_text: String = document.text
 	match kind:
 		0:
 			new_text = DMGraphSerializer.add_dialogue_after(new_text, selected_node, "Nathan", "New dialogue")
 		1:
 			new_text = DMGraphSerializer.add_response_after(new_text, selected_node, "New response")
-		2:
-			new_text = DMGraphSerializer.add_cue(new_text, "new_cue")
 		3:
 			new_text = DMGraphSerializer.add_jump_after(new_text, selected_node, "END", false)
 		4:
@@ -1190,7 +1642,68 @@ func _on_add_node_pressed(kind: int) -> void:
 		_:
 			return
 
+	_pending_focus_kind = graph_kind
+	_pending_focus_source = insert_at
+	_pending_focus_cue = ""
 	_apply_text(new_text, "Add node")
+
+
+func _kind_from_menu_id(id: int) -> DMGraphNode.Kind:
+	match id:
+		0:
+			return DMGraphNode.Kind.DIALOGUE
+		1:
+			return DMGraphNode.Kind.RESPONSE
+		2:
+			return DMGraphNode.Kind.CUE
+		3:
+			return DMGraphNode.Kind.JUMP
+		4:
+			return DMGraphNode.Kind.MUTATION
+		5:
+			return DMGraphNode.Kind.COMMENT
+		6:
+			return DMGraphNode.Kind.CONDITION
+		7:
+			return DMGraphNode.Kind.MATCH
+		8:
+			return DMGraphNode.Kind.WHILE
+		9:
+			return DMGraphNode.Kind.RANDOM
+		_:
+			return DMGraphNode.Kind.NOTE
+
+
+func _add_standalone_node(kind: DMGraphNode.Kind) -> void:
+	if document == null:
+		return
+
+	var new_text: String
+	if kind == DMGraphNode.Kind.CUE:
+		new_text = DMGraphSerializer.add_standalone_node(
+			document.text,
+			kind,
+			_unique_cue_name("new_cue")
+		)
+	else:
+		new_text = DMGraphSerializer.add_unconnected_node(document.text, kind)
+
+	if new_text == document.text:
+		return
+
+	_pending_focus_kind = kind
+	_pending_focus_cue = ""
+	_pending_focus_source = -1
+	_apply_text(new_text, "Add node")
+
+
+func _unique_cue_name(base: String) -> String:
+	var cue_name: String = base
+	var counter: int = 1
+	while document != null and document.cues.has(cue_name):
+		cue_name = "%s_%d" % [base, counter]
+		counter += 1
+	return cue_name
 
 
 func _on_auto_layout_pressed() -> void:
@@ -1206,6 +1719,55 @@ func _on_test_pressed() -> void:
 		test_requested.emit(selected_node.get_property("cue", ""))
 	else:
 		test_requested.emit(str(selected_node.source_start + 1))
+
+
+func _open_colors_dialog() -> void:
+	var dialog: AcceptDialog = AcceptDialog.new()
+	dialog.title = "Node colors"
+	dialog.ok_button_text = "Close"
+	dialog.confirmed.connect(dialog.queue_free)
+	dialog.close_requested.connect(dialog.queue_free)
+
+	var vbox: VBoxContainer = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	dialog.add_child(vbox)
+
+	var hint: Label = Label.new()
+	hint.text = "Choose the title background color for each node type."
+	vbox.add_child(hint)
+
+	for kind: DMGraphNode.Kind in DMGraphColors.get_kinds():
+		var row: HBoxContainer = HBoxContainer.new()
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+		var name_label: Label = Label.new()
+		name_label.text = DMGraphColors.get_kind_name(kind)
+		name_label.custom_minimum_size = Vector2(140, 0)
+		row.add_child(name_label)
+
+		var picker: ColorPickerButton = ColorPickerButton.new()
+		picker.color = DMGraphColors.get_color(kind)
+		picker.edit_alpha = false
+		picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		picker.custom_minimum_size = Vector2(120, 28)
+		picker.color_changed.connect(_on_node_color_changed.bind(kind))
+		row.add_child(picker)
+		vbox.add_child(row)
+
+	add_child(dialog)
+	dialog.popup_centered()
+
+
+func _on_node_color_changed(color: Color, kind: DMGraphNode.Kind) -> void:
+	DMGraphColors.set_color(kind, color)
+	_refresh_node_colors()
+
+
+func _refresh_node_colors() -> void:
+	for node_id: String in node_views:
+		var view: DMGraphNodeView = node_views[node_id]
+		if is_instance_valid(view):
+			view.refresh_appearance()
 
 
 func _open_localization_panel() -> void:
@@ -1338,6 +1900,10 @@ func _on_localization_item_selected(tree: Tree) -> void:
 
 func _apply_text(new_text: String, description: String) -> void:
 	if document == null or new_text == document.text:
+		_pending_focus_kind = -1
+		_pending_focus_cue = ""
+		_pending_focus_source = -1
+		_pending_focus_center = true
 		return
 
 	is_dirty = true
@@ -1346,6 +1912,80 @@ func _apply_text(new_text: String, description: String) -> void:
 	is_syncing = false
 	is_dirty = false
 	sync_from_text(new_text)
+	_focus_pending_node()
+
+
+func _focus_pending_node() -> void:
+	if _pending_focus_kind < 0 or document == null:
+		return
+
+	var kind: DMGraphNode.Kind = _pending_focus_kind
+	var cue: String = _pending_focus_cue
+	var source_hint: int = _pending_focus_source
+	var center_on_node: bool = _pending_focus_center
+	_pending_focus_kind = -1
+	_pending_focus_cue = ""
+	_pending_focus_source = -1
+	_pending_focus_center = true
+
+	var target: DMGraphNode = null
+	var cue_start: int = -1
+	if not cue.is_empty():
+		var cue_node: DMGraphNode = document.find_cue_node(cue)
+		if cue_node != null:
+			cue_start = cue_node.source_start
+			if kind == DMGraphNode.Kind.CUE:
+				target = cue_node
+
+	if target == null:
+		target = _find_newest_node(kind, cue_start, source_hint)
+
+	if target == null:
+		return
+
+	select_node(target.id, false)
+	if center_on_node:
+		_center_node_on_screen(target)
+
+
+func _find_newest_node(kind: DMGraphNode.Kind, min_source_line: int, exact_source_line: int) -> DMGraphNode:
+	var exact: DMGraphNode = null
+	var newest: DMGraphNode = null
+
+	for node: DMGraphNode in document.nodes.values():
+		if node.kind != kind or node.source_start < 0:
+			continue
+		if exact_source_line >= 0 and node.source_start == exact_source_line:
+			exact = node
+		if min_source_line >= 0 and node.source_start < min_source_line:
+			continue
+		if newest == null or node.source_start > newest.source_start:
+			newest = node
+
+	if exact != null:
+		return exact
+
+	return newest
+
+
+func _center_node_on_screen(node: DMGraphNode) -> void:
+	if not node_views.has(node.id):
+		return
+
+	var view: DMGraphNodeView = node_views[node.id]
+	var view_size: Vector2 = view.size
+	if view_size.x <= 0 or view_size.y <= 0:
+		view_size = Vector2(240, 120)
+
+	var zoom: float = maxf(graph_edit.zoom, 0.001)
+	var visible_size: Vector2 = graph_edit.size / zoom
+	var graph_center: Vector2 = graph_edit.scroll_offset + visible_size / 2.0
+	var position: Vector2 = graph_center - view_size / 2.0
+
+	node.position = position
+	view.position_offset = position
+	graph_edit.scroll_offset = position + view_size / 2.0 - visible_size / 2.0
+	_save_layout()
 
 
 func _save_layout() -> void:

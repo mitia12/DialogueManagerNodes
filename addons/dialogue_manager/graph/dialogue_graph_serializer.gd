@@ -380,7 +380,10 @@ static func set_comment_text(text: String, node: DMGraphNode, comment: String) -
 		return text
 
 	var indent: String = _line_indent(lines[start])
-	lines[start] = indent + comment
+	var comment_line: String = comment.strip_edges()
+	if not comment_line.begins_with("#"):
+		comment_line = "# " + comment_line
+	lines[start] = indent + comment_line
 	return "\n".join(PackedStringArray(lines))
 
 
@@ -452,9 +455,107 @@ static func add_response_after(text: String, node: DMGraphNode, prompt: String) 
 
 
 static func add_cue(text: String, cue: String) -> String:
-	var lines: Array = Array(text.split("\n"))
-	lines.append("~ " + cue)
-	return "\n".join(PackedStringArray(lines))
+	return add_standalone_node(text, DMGraphNode.Kind.CUE, cue)
+
+
+## Appends a new top-level block guarded by its own cue. The block is not
+## referenced by anything in the existing dialogue, so the graph shows it as
+## unconnected until the user links it to another node.
+static func add_standalone_node(
+	text: String,
+	kind: DMGraphNode.Kind,
+	cue: String,
+	character: String = "Nathan",
+	dialogue: String = "New dialogue"
+) -> String:
+	return append_block(text, _standalone_block(kind, cue, character, dialogue))
+
+
+## Appends a node after an explicit terminator so that it has no connections at
+## all. The node is still valid dialogue text and can be linked from the graph.
+static func add_unconnected_node(
+	text: String,
+	kind: DMGraphNode.Kind,
+	character: String = "Nathan",
+	dialogue: String = "New dialogue"
+) -> String:
+	if kind == DMGraphNode.Kind.CUE:
+		return text
+
+	var combined: PackedStringArray = []
+	if not _ends_with_goto(text):
+		combined.append("=> END")
+	combined.append_array(_standalone_block(kind, "", character, dialogue))
+	return append_block(text, combined)
+
+
+static func _ends_with_goto(text: String) -> bool:
+	var lines: PackedStringArray = text.split("\n")
+	for i: int in range(lines.size() - 1, -1, -1):
+		var line: String = lines[i].strip_edges()
+		if line.is_empty():
+			continue
+		return line.begins_with("=>")
+	return false
+
+
+static func _standalone_block(
+	kind: DMGraphNode.Kind,
+	cue: String,
+	character: String,
+	dialogue: String
+) -> PackedStringArray:
+	var block: PackedStringArray = []
+	if not cue.is_empty():
+		block.append("~ " + cue)
+
+	match kind:
+		DMGraphNode.Kind.CUE:
+			pass
+
+		DMGraphNode.Kind.DIALOGUE:
+			block.append(_format_dialogue_line(character, dialogue, PackedStringArray(), ""))
+
+		DMGraphNode.Kind.RESPONSE:
+			block.append(_format_dialogue_line(character, "Choose.", PackedStringArray(), ""))
+			block.append("- New response")
+
+		DMGraphNode.Kind.JUMP:
+			block.append("=> END")
+
+		DMGraphNode.Kind.MUTATION:
+			block.append("$> debug(\"mutation\")")
+
+		DMGraphNode.Kind.COMMENT:
+			block.append("# Comment")
+
+		DMGraphNode.Kind.CONDITION:
+			block.append("if true")
+			block.append("\t" + _format_dialogue_line(character, dialogue, PackedStringArray(), ""))
+
+		DMGraphNode.Kind.MATCH:
+			block.append("match 1")
+			block.append("\twhen 1")
+			block.append("\t\t" + _format_dialogue_line(character, dialogue, PackedStringArray(), ""))
+
+		DMGraphNode.Kind.WHILE:
+			block.append("while false")
+			block.append("\t" + _format_dialogue_line(character, dialogue, PackedStringArray(), ""))
+
+		DMGraphNode.Kind.RANDOM:
+			block.append("% " + _format_dialogue_line(character, dialogue, PackedStringArray(), ""))
+
+	return block
+
+
+static func append_block(text: String, block: PackedStringArray) -> String:
+	var new_text: String = text
+	if not new_text.is_empty():
+		if not new_text.ends_with("\n"):
+			new_text += "\n"
+		new_text += "\n"
+	new_text += "\n".join(block)
+	return new_text
 
 
 static func add_cue_before(text: String, node: DMGraphNode, cue: String) -> String:
@@ -530,6 +631,38 @@ static func delete_node(text: String, node: DMGraphNode) -> String:
 	var result: Array = []
 	result.append_array(lines.slice(0, start))
 	result.append_array(lines.slice(end + 1))
+	return "\n".join(PackedStringArray(result))
+
+
+## Moves a node's source block so that it starts at [param before_line].
+## Line numbers refer to the original text before the move.
+static func move_node_block(text: String, node: DMGraphNode, before_line: int) -> String:
+	var lines: Array = Array(text.split("\n"))
+	var start: int = node.source_start
+	var end: int = node.source_end
+	if start < 0 or start >= lines.size():
+		return text
+	if end < start:
+		end = start
+	if end >= lines.size():
+		end = lines.size() - 1
+	if before_line >= start and before_line <= end + 1:
+		return text
+
+	var block: Array = lines.slice(start, end + 1)
+	var without_block: Array = []
+	without_block.append_array(lines.slice(0, start))
+	without_block.append_array(lines.slice(end + 1))
+
+	var insert_at: int = before_line
+	if insert_at > end:
+		insert_at -= block.size()
+	insert_at = clampi(insert_at, 0, without_block.size())
+
+	var result: Array = []
+	result.append_array(without_block.slice(0, insert_at))
+	result.append_array(block)
+	result.append_array(without_block.slice(insert_at))
 	return "\n".join(PackedStringArray(result))
 
 
